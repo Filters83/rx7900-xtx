@@ -757,8 +757,20 @@ static void ggml_vk_create_pipeline_func(vk_device& device, vk_pipeline& pipelin
     }
 #endif
 
+    // GGML_VK_TRACE_PIPELINES=1: log every pipeline before and after the driver compiles it (finds driver compiler crashes)
+    static const bool trace_pipelines = [] { const char * e = getenv("GGML_VK_TRACE_PIPELINES"); return e && atoi(e) != 0; }();
+    if (trace_pipelines) {
+        std::string sc;
+        for (uint32_t c : specialization_constants) { sc += std::to_string(c) + ","; }
+        fprintf(stderr, "ggml_vulkan: compiling %s spv=%zu sg=%u full=%d spec=[%s]\n", pipeline->name.c_str(), spv_size, required_subgroup_size, (int) require_full_subgroups, sc.c_str());
+        fflush(stderr);
+    }
     try {
         pipeline->pipeline = device->device.createComputePipeline(VK_NULL_HANDLE, compute_pipeline_create_info).value;
+        if (trace_pipelines) {
+            fprintf(stderr, "ggml_vulkan: compiled  %s\n", pipeline->name.c_str());
+            fflush(stderr);
+        }
     } catch (const vk::SystemError& e) {
         std::cerr << "ggml_vulkan: Compute pipeline creation failed for " << pipeline->name << std::endl;
         std::cerr << "ggml_vulkan: " << e.what() << std::endl;
@@ -1406,7 +1418,9 @@ vk_fa_tuning_params get_fa_tuning_params(const vk_device& device, uint32_t hsk, 
     if (path == FA_COOPMAT2 && k_type == GGML_TYPE_BF16 && !device->coopmat2_bf16_support) {
         path = FA_COOPMAT1;
     }
-    if (path == FA_COOPMAT1 && k_type == GGML_TYPE_BF16 && !device->coopmat_bf16_support) {
+    // the AMD proprietary driver (Adrenalin 26.10.1) crashes compiling the coopmat1 flash attention shader with bf16 K/V
+    if (path == FA_COOPMAT1 && k_type == GGML_TYPE_BF16 &&
+        (!device->coopmat_bf16_support || device->driver_id == vk::DriverId::eAmdProprietary)) {
         path = FA_SCALAR;
     }
 
