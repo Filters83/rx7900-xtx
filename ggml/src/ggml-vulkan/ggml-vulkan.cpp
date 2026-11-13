@@ -1686,6 +1686,32 @@ static bool ggml_vk_fa_scalar_uses_mmq(const vk_device& device, ggml_type k_type
 #endif
 }
 
+// Port of upstream #31587: AMD proprietary drivers before 2.0.416 (Adrenalin 26.10.1) run the large coopmat matmul tile
+// much slower than the medium one; fixed drivers get the RADV configuration. GGML_VK_AMD_LARGE_TILE=0 keeps the old gate
+static bool ggml_vk_amd_large_tile_supported(const vk_device& device) {
+    if (device->driver_id != vk::DriverId::eAmdProprietary) {
+        return true;
+    }
+    static const bool enabled = [] { const char * e = getenv("GGML_VK_AMD_LARGE_TILE"); return !e || atoi(e) != 0; }();
+    if (!enabled) {
+        return false;
+    }
+    // AMD encodes driverVersion as major [31:22], build [21:0], not VK_MAKE_API_VERSION.
+    const uint32_t major = device->properties.driverVersion >> 22;
+    const uint32_t build = device->properties.driverVersion & 0x3fffff;
+    return major > 2 || (major == 2 && build >= 416);
+}
+
+// The fork's own RADV-only matmul work (128x256 tile, double-buffered tiles, f32 accumulators) was never run on the AMD
+// proprietary driver: opt in with GGML_VK_AMD_PROP_XL=1 on a driver that passes the large-tile check
+static bool ggml_vk_amd_radv_tuning_supported(const vk_device& device) {
+    if (device->driver_id != vk::DriverId::eAmdProprietary) {
+        return true;
+    }
+    static const bool opt_in = [] { const char * e = getenv("GGML_VK_AMD_PROP_XL"); return e && atoi(e) != 0; }();
+    return opt_in && ggml_vk_amd_large_tile_supported(device);
+}
+
 void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     VK_LOG_DEBUG("ggml_vk_load_shaders(" << device->name << ")");
 
@@ -1828,7 +1854,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         if ((device->architecture == AMD_GCN) && (device->driver_id != vk::DriverId::eAmdProprietary)) {
             m_warptile_mmq = m_warptile_mmq_int = { 256, 64, 64, 32, 16, 16, 2, 2, 2, 1, 16 };
             m_warptile_mmqid = m_warptile_mmqid_int = { 256, 64, 64, 32, 16, 16, 2, 2, 2, 1, 16 };
-        } else if (device->vendor_id == VK_VENDOR_ID_AMD && device->coopmat_support && device->driver_id != vk::DriverId::eAmdProprietary) {
+        } else if (device->vendor_id == VK_VENDOR_ID_AMD && device->coopmat_support && ggml_vk_amd_large_tile_supported(device)) {
             // This is intentionally using tx_m values, slight performance increase
             l_warptile = { 256, 128, 128, 16, mm_warp_8, 64, 2, tm_m, tn_m, tk_m, mm_warp_8 };
             l_warptile_mmq = l_warptile_mmq_int = { 256, 128, 128, 32, mm_warp_8, 64, 2, tm_m, tn_m, tk_m, mm_warp_8 };
@@ -1841,7 +1867,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         // (prompt processing with -ub 512). A dequantized A tile serves twice the columns: 7900 XTX, 512 columns,
         // iq3_xxs 50.4 -> 54.3 TFLOPS, iq3_s 52.9 -> 54.5, iq4_xs 53.0 -> 53.8, iq2_s 57.3 -> 56.8
         if (device->vendor_id == VK_VENDOR_ID_AMD && device->coopmat_support && device->architecture != AMD_GCN &&
-                device->driver_id != vk::DriverId::eAmdProprietary) {
+                ggml_vk_amd_radv_tuning_supported(device)) {
             xl_warptile_mmq = { 512, 128, 256, 32, mm_warp_8, 64, 2, tm_m, tn_m, tk_m, mm_warp_8 };
             // in 32-wide subgroups: the WMMA A/B fragments are replicated per 16 lanes, so a 64-wide subgroup holds and
             // reads from shared memory twice their bytes. 16 subgroups of 32 x 64 (7900 XTX, 512 columns: iq3_s
@@ -2437,7 +2463,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         auto mm_nbuf = [&](const std::vector<uint32_t>& wt, const vk_matmul_pipeline_key& key) -> uint32_t {
             const bool quant = key.type_a != GGML_TYPE_F32 && key.type_a != GGML_TYPE_F16 && key.type_a != GGML_TYPE_BF16;
             if (!mm_dbuf || !quant || key.f16acc || key.mul_mat_id || device->vendor_id != VK_VENDOR_ID_AMD ||
-                device->driver_id == vk::DriverId::eAmdProprietary || wt[2] != 256) {
+                !ggml_vk_amd_radv_tuning_supported(device) || wt[2] != 256) {
                 return 1;
             }
             return ggml_vk_matmul_shmem_support(device, wt, false, key.type_a, 2) ? 2 : 1;
@@ -4787,7 +4813,7 @@ vk_device ggml_vk_get_device(size_t idx) {
             switch (device->vendor_id) {
 #ifndef GGML_VULKAN_RUN_TESTS
             case VK_VENDOR_ID_AMD:
-                device->mul_mat_l[i]    = device->coopmat_support && device->driver_id != vk::DriverId::eAmdProprietary;
+                device->mul_mat_l[i]    = device->coopmat_support && ggml_vk_amd_large_tile_supported(device);
                 device->mul_mat_m[i]    = true;
                 device->mul_mat_s[i]    = true;
                 device->mul_mat_id_l[i] = false;
@@ -5972,7 +5998,7 @@ static bool ggml_vk_get_mul_mat_mat_f16acc(ggml_backend_vk_context * ctx, ggml_t
     // accumulators and was not measured. GGML_VK_MM_F16ACC=1 keeps f16 accumulators
     static const bool mm_f16acc = [] { const char * e = getenv("GGML_VK_MM_F16ACC"); return e && atoi(e) != 0; }();
     if (ctx->device->coopmat_support && !mm_f16acc && ctx->device->vendor_id == VK_VENDOR_ID_AMD &&
-        ctx->device->architecture == AMD_RDNA3 && ctx->device->driver_id != vk::DriverId::eAmdProprietary) {
+        ctx->device->architecture == AMD_RDNA3 && ggml_vk_amd_radv_tuning_supported(ctx->device)) {
         return false;
     }
     if (ctx->device->coopmat_support) {
