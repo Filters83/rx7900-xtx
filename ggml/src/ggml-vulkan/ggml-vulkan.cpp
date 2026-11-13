@@ -8307,14 +8307,17 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
             const uint32_t kch = sg >= 8 ? 32 : 64;
             const uint32_t wg  = sg * gqa_sgs;
             // q8_0 K/V load in 8-quant octets: 32-dim blocks per subgroup and 4-byte aligned rows
-            const bool k_oct_ok = k_type_eff != GGML_TYPE_Q8_0 ||
+            // q4_0 takes the same octet loads as q8_0 (18-byte blocks, two lanes per 8 quant bytes: low / high nibbles)
+            const bool k_is_oct = k_type_eff == GGML_TYPE_Q8_0 || k_type_eff == GGML_TYPE_Q4_0;
+            const bool v_is_oct = v_type_eff == GGML_TYPE_Q8_0 || v_type_eff == GGML_TYPE_Q4_0;
+            const bool k_oct_ok = !k_is_oct ||
                                   (gqa_sgs % (kch / 8) == 0 && (16 * kch / 8) % gqa_sgs == 0 &&
                                    nbk1 % 4 == 0 && nbk2 % 4 == 0 && nbk3 % 4 == 0);
             // V^T is staged in pairs of rows, so a lane needs at least 2 consecutive V rows
-            const bool v_oct_ok = v_type_eff != GGML_TYPE_Q8_0 ||
+            const bool v_oct_ok = !v_is_oct ||
                                   ((HSV / sg) % 32 == 0 && gqa_sgs % (HSV / sg / 8) == 0 && 16 * (HSV / sg / 8) >= 2 * gqa_sgs &&
                                    nbv1 % 4 == 0 && nbv2 % 4 == 0 && nbv3 % 4 == 0);
-            const bool v_rows_ok = v_type_eff == GGML_TYPE_Q8_0 || 16 * (HSV / sg / 4) >= 2 * gqa_sgs;
+            const bool v_rows_ok = v_is_oct || 16 * (HSV / sg / 4) >= 2 * gqa_sgs;
             // the shader keeps the output in 8 separate accumulator matrices (row tiles x HSV tiles per subgroup)
             const bool o_tiles_ok = (gqa_br / 16) * (HSV / sg / 16) <= 8;
             if (HSK % kch == 0 && HSV % (16 * sg) == 0 && wg / gqa_br <= gqa_sgs && k_oct_ok && v_oct_ok && v_rows_ok && o_tiles_ok &&
