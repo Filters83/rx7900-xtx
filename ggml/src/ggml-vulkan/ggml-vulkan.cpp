@@ -15542,7 +15542,14 @@ static bool ggml_vk_replay_uses(const ggml_cgraph * cgraph, F && f) {
     for (size_t w = 0; w < n_words; w++) {
         ggml_bitset_t bits = hs.used[w];
         while (bits) {
+#if defined(_MSC_VER) && !defined(__clang__)
+            // Windows port: MSVC has no __builtin_ctz
+            unsigned long ctz_idx = 0;
+            _BitScanForward(&ctz_idx, (unsigned long) bits);
+            const size_t i = (w << BITSET_SHR) + ctz_idx;
+#else
             const size_t i = (w << BITSET_SHR) + __builtin_ctz(bits);
+#endif
             bits &= bits - 1;
             if (!f(hs.keys[i], cgraph->use_counts[i])) {
                 return false;
