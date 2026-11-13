@@ -8315,7 +8315,9 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
                                   ((HSV / sg) % 32 == 0 && gqa_sgs % (HSV / sg / 8) == 0 && 16 * (HSV / sg / 8) >= 2 * gqa_sgs &&
                                    nbv1 % 4 == 0 && nbv2 % 4 == 0 && nbv3 % 4 == 0);
             const bool v_rows_ok = v_type_eff == GGML_TYPE_Q8_0 || 16 * (HSV / sg / 4) >= 2 * gqa_sgs;
-            if (HSK % kch == 0 && HSV % (16 * sg) == 0 && wg / gqa_br <= gqa_sgs && k_oct_ok && v_oct_ok && v_rows_ok &&
+            // the shader keeps the output in 8 separate accumulator matrices (row tiles x HSV tiles per subgroup)
+            const bool o_tiles_ok = (gqa_br / 16) * (HSV / sg / 16) <= 8;
+            if (HSK % kch == 0 && HSV % (16 * sg) == 0 && wg / gqa_br <= gqa_sgs && k_oct_ok && v_oct_ok && v_rows_ok && o_tiles_ok &&
                 (16 * kch / 4) % gqa_sgs == 0 && (16 * HSV / sg / 4) % gqa_sgs == 0 && gqa_sgs % (HSV / sg / 4) == 0 &&
                 wg <= ctx->device->properties.limits.maxComputeWorkGroupSize[0] &&
                 ggml_vk_flash_attn_gqa_shmem_support(ctx->device, gqa_br, sg, HSK, HSV, f32acc)) {

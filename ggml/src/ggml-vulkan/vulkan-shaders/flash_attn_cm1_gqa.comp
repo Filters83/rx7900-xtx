@@ -31,6 +31,35 @@
 #extension GL_KHR_memory_scope_semantics : enable
 #extension GL_KHR_cooperative_matrix : enable
 
+// The S, P and O matrices are separate variables, not arrays: storing to an element of an array of cooperative
+// matrices inside the KV loop crashes the AMD proprietary driver's compiler (amdvlk64.dll access violation in
+// createComputePipeline, Adrenalin 26.10.1). Br is 16 or 32 (1 or 2 row tiles) and the host checks
+// row_tiles * hsv_tiles <= 8. The index is a constant once the [[unroll]] loops are unrolled.
+#define ACC_MAT coopmat<ACC_TYPE, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>
+#define A_MAT   coopmat<FLOAT_TYPE, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA>
+
+#define S_MULADD(t, A, B) { if ((t) == 0) { S0 = coopMatMulAdd(A, B, S0); } else { S1 = coopMatMulAdd(A, B, S1); } }
+
+#define O_SCALE(i, Dm) { \
+    if ((i) == 0) { O0 = O0 * Dm; } else if ((i) == 1) { O1 = O1 * Dm; } else if ((i) == 2) { O2 = O2 * Dm; } else if ((i) == 3) { O3 = O3 * Dm; } \
+    else if ((i) == 4) { O4 = O4 * Dm; } else if ((i) == 5) { O5 = O5 * Dm; } else if ((i) == 6) { O6 = O6 * Dm; } else { O7 = O7 * Dm; } }
+
+#define O_MULADD(i, A, B) { \
+    if ((i) == 0) { O0 = coopMatMulAdd(A, B, O0); } else if ((i) == 1) { O1 = coopMatMulAdd(A, B, O1); } \
+    else if ((i) == 2) { O2 = coopMatMulAdd(A, B, O2); } else if ((i) == 3) { O3 = coopMatMulAdd(A, B, O3); } \
+    else if ((i) == 4) { O4 = coopMatMulAdd(A, B, O4); } else if ((i) == 5) { O5 = coopMatMulAdd(A, B, O5); } \
+    else if ((i) == 6) { O6 = coopMatMulAdd(A, B, O6); } else { O7 = coopMatMulAdd(A, B, O7); } }
+
+#define O_STORE(i, buf, off, stride) { \
+    if ((i) == 0) { coopMatStore(O0, buf, off, stride, gl_CooperativeMatrixLayoutRowMajor); } \
+    else if ((i) == 1) { coopMatStore(O1, buf, off, stride, gl_CooperativeMatrixLayoutRowMajor); } \
+    else if ((i) == 2) { coopMatStore(O2, buf, off, stride, gl_CooperativeMatrixLayoutRowMajor); } \
+    else if ((i) == 3) { coopMatStore(O3, buf, off, stride, gl_CooperativeMatrixLayoutRowMajor); } \
+    else if ((i) == 4) { coopMatStore(O4, buf, off, stride, gl_CooperativeMatrixLayoutRowMajor); } \
+    else if ((i) == 5) { coopMatStore(O5, buf, off, stride, gl_CooperativeMatrixLayoutRowMajor); } \
+    else if ((i) == 6) { coopMatStore(O6, buf, off, stride, gl_CooperativeMatrixLayoutRowMajor); } \
+    else { coopMatStore(O7, buf, off, stride, gl_CooperativeMatrixLayoutRowMajor); } }
+
 #include "types.glsl"
 #include "flash_attn_base.glsl"
 #include "flash_attn_dequant.glsl"
@@ -192,10 +221,14 @@ void main() {
     float Mrow = NEG_FLT_MAX_OVER_2;
     float Lrow = 0;
 
-    coopmat<ACC_TYPE, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> O[row_tiles * hsv_tiles];
-    [[unroll]] for (uint32_t i = 0; i < row_tiles * hsv_tiles; ++i) {
-        O[i] = coopmat<ACC_TYPE, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
-    }
+    ACC_MAT O0 = ACC_MAT(0.0);
+    ACC_MAT O1 = ACC_MAT(0.0);
+    ACC_MAT O2 = ACC_MAT(0.0);
+    ACC_MAT O3 = ACC_MAT(0.0);
+    ACC_MAT O4 = ACC_MAT(0.0);
+    ACC_MAT O5 = ACC_MAT(0.0);
+    ACC_MAT O6 = ACC_MAT(0.0);
+    ACC_MAT O7 = ACC_MAT(0.0);
 
     const uint32_t k_offset = (ik2*p.nb12 + ik3*p.nb13) / FaBlockBytesK;
     const uint32_t v_offset = (iv2*p.nb22 + iv3*p.nb23) / FaBlockBytesV;
@@ -332,10 +365,8 @@ void main() {
         }
 
         // ---- S^T = K Q^T for this subgroup's 16 KV rows, 64 dims of K staged at a time
-        coopmat<ACC_TYPE, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> S[row_tiles];
-        [[unroll]] for (uint32_t t = 0; t < row_tiles; ++t) {
-            S[t] = coopmat<ACC_TYPE, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
-        }
+        ACC_MAT S0 = ACC_MAT(0.0);
+        ACC_MAT S1 = ACC_MAT(0.0);
 
         [[unroll]] for (uint32_t ch = 0; ch < HSK / KCH; ++ch) {
             if (FaTypeK == GGML_TYPE_Q8_0) {
@@ -359,11 +390,11 @@ void main() {
                 coopMatLoad(Km, stg, sg * stg_sg8 + dd * 2, kstride8, gl_CooperativeMatrixLayoutRowMajor);
                 [[unroll]] for (uint32_t t = 0; t < row_tiles; ++t) {
                     if (QF_REGS) {
-                        S[t] = coopMatMulAdd(Km, Qreg[t * (HSK / 16) + ch * (KCH / 16) + dd], S[t]);
+                        S_MULADD(t, Km, Qreg[t * (HSK / 16) + ch * (KCH / 16) + dd])
                     } else {
                         coopmat<FLOAT_TYPE, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> Qm;
                         coopMatLoad(Qm, Qf, t * 16 * qstride8 + ch * (KCH / 8) + dd * 2, qstride8, gl_CooperativeMatrixLayoutColumnMajor);
-                        S[t] = coopMatMulAdd(Km, Qm, S[t]);
+                        S_MULADD(t, Km, Qm)
                     }
                 }
             }
@@ -374,8 +405,9 @@ void main() {
         uvec3 kq[HSK / KCH][U_K];
         LOAD_K(min(j + 1, end_j - 1))
 
-        [[unroll]] for (uint32_t t = 0; t < row_tiles; ++t) {
-            coopMatStore(S[t], sfsh, (sg * 16) * sstride + t * 16, sstride, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatStore(S0, sfsh, (sg * 16) * sstride, sstride, gl_CooperativeMatrixLayoutRowMajor);
+        if (row_tiles > 1) {
+            coopMatStore(S1, sfsh, (sg * 16) * sstride + 16, sstride, gl_CooperativeMatrixLayoutRowMajor);
         }
         barrier();
 
@@ -425,10 +457,10 @@ void main() {
 
         // ---- O = diag(eM) O + P V for this subgroup's output dims
         [[unroll]] for (uint32_t t = 0; t < row_tiles; ++t) {
-            coopmat<ACC_TYPE, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> D;
+            ACC_MAT D;
             coopMatLoad(D, diag, t * 16 * 16, 16, gl_CooperativeMatrixLayoutRowMajor);
             [[unroll]] for (uint32_t h = 0; h < hsv_tiles; ++h) {
-                O[t * hsv_tiles + h] = O[t * hsv_tiles + h] * D;
+                O_SCALE(t * hsv_tiles + h, D)
             }
         }
 
@@ -464,15 +496,18 @@ void main() {
             subgroupMemoryBarrierShared();
             subgroupBarrier();
 
-            coopmat<FLOAT_TYPE, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> P[row_tiles];
-            [[unroll]] for (uint32_t t = 0; t < row_tiles; ++t) {
-                coopMatLoad(P[t], Psh, (t * 16) * pstride4 + c16 * 4, pstride4, gl_CooperativeMatrixLayoutRowMajor);
+            A_MAT P0;
+            A_MAT P1;
+            coopMatLoad(P0, Psh, c16 * 4, pstride4, gl_CooperativeMatrixLayoutRowMajor);
+            if (row_tiles > 1) {
+                coopMatLoad(P1, Psh, 16 * pstride4 + c16 * 4, pstride4, gl_CooperativeMatrixLayoutRowMajor);
             }
             [[unroll]] for (uint32_t h = 0; h < hsv_tiles; ++h) {
                 coopmat<FLOAT_TYPE, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> Vm;
                 coopMatLoad(Vm, stg, sg * stg_sg8 + (h * 16) * vtstride8, vtstride8, gl_CooperativeMatrixLayoutColumnMajor);
-                [[unroll]] for (uint32_t t = 0; t < row_tiles; ++t) {
-                    O[t * hsv_tiles + h] = coopMatMulAdd(P[t], Vm, O[t * hsv_tiles + h]);
+                O_MULADD(h, P0, Vm)
+                if (row_tiles > 1) {
+                    O_MULADD(hsv_tiles + h, P1, Vm)
                 }
             }
             subgroupBarrier();
@@ -520,7 +555,7 @@ void main() {
 
     [[unroll]] for (uint32_t t = 0; t < row_tiles; ++t) {
         [[unroll]] for (uint32_t h = 0; h < hsv_tiles; ++h) {
-            coopMatStore(O[t * hsv_tiles + h], sfsh, sg * 256, 16, gl_CooperativeMatrixLayoutRowMajor);
+            O_STORE(t * hsv_tiles + h, sfsh, sg * 256, 16)
             subgroupMemoryBarrierShared();
             subgroupBarrier();
 
