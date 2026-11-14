@@ -26,7 +26,7 @@ It needs Visual Studio with the C++ toolchain and the Vulkan SDK. Two portabilit
 - **Grouped-query flash attention shader (`flash_attn_cm1_gqa.comp`).** The driver's shader compiler crashed with an
   access violation in `amdvlk64.dll` during `createComputePipeline`, so the server died at the first decode. Bisecting the
   shader showed that a store to an element of an array of cooperative matrices inside the KV loop is enough to trigger it.
-  The S, P and O matrices are now separate variables. `FLASH_ATTN_EXT` then passes 3622 cases on this card.
+  The S, P and O matrices are now separate variables.
 - **Large matmul tile.** Port of upstream llama.cpp #31587: the large coopmat tile is enabled on the proprietary driver
   from 2.0.416 on. `GGML_VK_AMD_LARGE_TILE=0` keeps the old gate.
 - **Split-K.** Ports of upstream llama.cpp #30280 and #30146. `GGML_VK_SPLIT_K_LARGE=0` and `GGML_VK_SPLIT_K_SMALLN=0`
@@ -43,10 +43,12 @@ accumulators) on the proprietary driver. No effect was measured with `-ub 256`.
 `GGML_VK_TRACE_PIPELINES=1` logs every pipeline before and after the driver compiles it, which is how the crashing
 shader was found.
 
-## Known problem
+## Kernel tests
 
-`test-backend-ops -o FLASH_ATTN_EXT` still stops with a driver crash while compiling the non-GQA coopmat1 shader
-(`flash_attn_f32_f16_cm1`) for head size 128. It was not hit by Qwen3.8-27B in any run. Not fixed.
+`test-backend-ops -b Vulkan0` on this card: `-o MUL_MAT` 1138/1138, `-o FLASH_ATTN_EXT` 5396/5396.
+
+The non-GQA coopmat1 shader (`flash_attn_cm1.comp`) hit the same compiler crash for head size 128 and got the same
+change: `SfMat` and `PVMat` are separate variables for the (at most two) row tiles.
 
 ## Results
 
