@@ -34,6 +34,10 @@ It needs Visual Studio with the C++ toolchain and the Vulkan SDK. Two portabilit
 - **q4_0 KV cache.** The grouped-query shader had a fast load path for q8_0 K/V only; q4_0 went through the generic
   per-element decode and was slower than not using the shader at all (349 vs 502 tokens/s prefill at 32K). q4_0 now
   takes the same octet loads as q8_0 (18-byte blocks, low and high nibbles): 615 tokens/s.
+- **Prompt batches.** On RADV the fork sends batches of a GQA model to the grouped-query shader instead of the f16
+  scratch copy of K/V. On the proprietary driver the scratch copy is faster (32K prefill, no draft: 777 vs 615
+  tokens/s), so batches of 64+ tokens keep it there by default and the shader takes the smaller ones.
+  `GGML_VK_FA_GQA_PREFILL=1` forces the shader, `=0` disables it for all batch sizes.
 - **bf16 K/V.** The driver also crashes compiling the coopmat1 flash attention shader with bf16 K/V; that case falls
   back to the scalar shader on the proprietary driver.
 
@@ -54,24 +58,30 @@ change: `SfMat` and `PVMat` are separate variables for the (at most two) row til
 
 Qwen3.8-27B Unsloth UD-Q2_K_XL (mostly IQ2 / IQ3 tensors), `-c 114688`, q4_0 KV cache, `-b 512 -ub 256`, flash attention,
 vision projector on the CPU, temperature 1.0. Synthetic prompt, one pass per row, 256-512 generated tokens with
-`ignore_eos`. Upstream is llama.cpp b12233 (`5f490d7`, 2026-11-09), official Windows Vulkan build.
+`ignore_eos`. Upstream is llama.cpp v1.0.0 (official Windows Vulkan build b12359, `b1b770d`, 2026-11-13); b12233 from
+four days earlier measured the same within noise.
 
 | Decode, tokens/s | short | 32K | 65K |
 |---|---:|---:|---:|
-| upstream, no draft | 35.3 | 32.5 | 30.2 |
-| upstream + MTP 1 | 50.1 | 45.3 | 41.8 |
-| this fork + MTP 1 | 68.4 | 62.9 | 57.6 |
-| this fork + MTP 3, `--spec-accept rejection -bs --spec-draft-vocab 65536` | 79.2 | 67.9 | 53.1 |
-| this fork + DFlash2 4, same flags | 74.1 | 66.0 | 47.0 |
+| upstream, no draft | 35.4 | 33.4 | 31.6 |
+| upstream + MTP 1 | 51.6 | 47.5 | 41.4 |
+| upstream + MTP 3 | 36.5 | 43.1 | 39.5 |
+| upstream + DFlash2 4 | 38.0 | 34.7 | 34.7 |
+| this fork, no draft | 38.6 | 36.4 | 34.0 |
+| this fork + MTP 1 | 72.3 | 61.6 | 55.5 |
+| this fork + MTP 3, `--spec-accept rejection -bs --spec-draft-vocab 65536` | 84.8 | 66.1 | 53.8 |
+| this fork + DFlash2 4, same flags | 71.6 | 62.3 | 52.2 |
 
 | Prefill, tokens/s | 0-32K | 32K-65K |
 |---|---:|---:|
-| upstream, no draft | 755 | 482 |
-| upstream + MTP 1 | 704 | 456 |
-| this fork + MTP 1 | 554 | 300 |
-| this fork + MTP 3 | 551 | 292 |
-| this fork + DFlash2 4 | 603 | 344 |
+| upstream, no draft | 761 | 501 |
+| upstream + MTP 1 | 728 | 456 |
+| upstream + DFlash2 4 | 744 | 478 |
+| this fork, no draft | 795 | 509 |
+| this fork + MTP 1 | 662 | 354 |
+| this fork + MTP 3 | 644 | 358 |
+| this fork + DFlash2 4 | 710 | 464 |
 
-Decode is 27-58% faster than upstream with MTP. Prefill is still 14-36% slower, and the gap grows with depth, so it is
-in the attention path rather than the matmuls: the fixed cost per token is the same in both builds. Peak VRAM is the
-same as upstream with MTP (13.3 GiB against 13.5) and 0.6 GiB higher with the DFlash2 draft.
+Decode with a draft is 26-64% faster than upstream + MTP 1. Prefill without a draft and with the DFlash2 draft is on
+par with upstream; with an MTP draft it is still 9-22% slower. Peak VRAM is the same as upstream with MTP (13.6 GiB
+against 13.7) and 0.6 GiB higher with the DFlash2 draft (14.2 GiB).

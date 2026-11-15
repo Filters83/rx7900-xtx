@@ -8213,8 +8213,11 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
 
     // larger batches (prompt processing) also take the grouped-query layout and run on the coopmat1 GQA shader,
     // which dequantizes K/V itself instead of the f16 scratch copy: 7900 XTX, 6:1 GQA, q8_0 KV, 512-token batches
-    // 28 vs 18 TFLOPS (GGML_VK_FA_GQA_PREFILL=0 disables)
-    static const bool gqa_prefill = [] { const char * e = getenv("GGML_VK_FA_GQA_PREFILL"); return !e || atoi(e) != 0; }();
+    // 28 vs 18 TFLOPS (GGML_VK_FA_GQA_PREFILL=0 disables, =1 forces). On the AMD proprietary driver the f16 scratch copy
+    // is faster for batches of 64+ tokens (RX 9070, q4_0 KV, 32K prefill: 777 vs 615 t/s), so those keep it by default
+    static const int gqa_prefill_env = [] { const char * e = getenv("GGML_VK_FA_GQA_PREFILL"); return e ? (atoi(e) != 0 ? 1 : 0) : -1; }();
+    const bool gqa_prefill = gqa_prefill_env >= 0 ? gqa_prefill_env != 0
+                                                  : (ctx->device->driver_id != vk::DriverId::eAmdProprietary || neq1 < 64);
     const bool gqa_large_ok = gqa_prefill && neq1 > 8 && ctx->device->coopmat1_fa_support && !ctx->device->coopmat2 &&
                               neq2 > nek2 && neq2 % nek2 == 0 && neq2 / nek2 <= 16 &&
                               HSK % 64 == 0 && HSV % 64 == 0 && k->type != GGML_TYPE_BF16 && v->type != GGML_TYPE_BF16;
