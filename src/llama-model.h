@@ -609,6 +609,24 @@ struct llama_meta_device_get_split_state_userdata {
 
 struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const struct ggml_tensor * tensor, void * userdata);
 
+// trellis fork: a trellis-coded weight's side tensors and sides (nariq/FORMAT.md)
+struct llama_trellis_weight {
+    ggml_tensor * s16  = nullptr; // F16 [K/16] block scales
+    ggml_tensor * pre  = nullptr; // F32 [K] input-side vector
+    ggml_tensor * post = nullptr; // F32 [N] output-side vector
+    ggml_tensor * pin  = nullptr; // I32 [K] input gather, optional
+    ggml_tensor * pout = nullptr; // I32 [N] output gather, optional
+    std::vector<int32_t> desc;    // trellis.desc.<w>: the sides (ggml_trellis_mul_mat)
+};
+
+struct llama_trellis {
+    std::unordered_map<const ggml_tensor *, llama_trellis_weight> weights;
+    std::vector<ggml_tensor *> bands;     // a coded lm_head in frequency bands (output.bandNN.weight), in order
+    ggml_tensor * vocab_gather = nullptr; // I32 [n_vocab]: logits[t] = banded[vocab_gather[t]]
+    std::vector<ggml_tensor *> embed_bands; // a coded embedding in frequency bands (token_embd.bandNN.weight), in order
+    ggml_tensor * embed_gather = nullptr;   // I32 [n_vocab]: token t's row is banded row embed_gather[t]
+};
+
 struct llama_model {
     llm_type type = LLM_TYPE_UNKNOWN;
     llm_arch arch = LLM_ARCH_UNKNOWN;
@@ -617,6 +635,14 @@ struct llama_model {
 
     llama_hparams hparams = {};
     llama_vocab   vocab;
+
+    // trellis fork: the trellis-coded weights (empty for other models)
+    llama_trellis trellis;
+
+    const llama_trellis_weight * trellis_weight(const ggml_tensor * w) const {
+        const auto it = trellis.weights.find(w);
+        return it == trellis.weights.end() ? nullptr : &it->second;
+    }
 
     // for classifier models
     std::vector<std::string> classifier_labels;
@@ -813,6 +839,20 @@ struct llama_model_base : public llama_model {
     void create_tensor_qkv(llama_layer & layer, int bid,
                 int64_t n_embd_, int64_t n_embd_q_, int64_t n_embd_k_, int64_t n_embd_v_,
                 int flags);
+
+    // trellis fork: a coded weight's side tensors and `trellis.desc` (called by create_tensor)
+    void create_trellis_sides(llama_model_loader & ml, const LLM_TN_IMPL & tn, ggml_tensor * w);
+
+    // trellis fork: a coded lm_head in frequency bands, if the file has one (`trellis.lm_head_bands`)
+    bool create_trellis_bands(int64_t n_embd, int64_t n_vocab);
+
+    // trellis fork: a coded embedding in frequency bands, if the file has one (`trellis.embed_bands`); tok_embd stays
+    // NULL then
+    bool create_trellis_embed_bands(int64_t n_embd, int64_t n_vocab);
+
+    // trellis fork: the shared part of create_trellis_bands and create_trellis_embed_bands
+    bool create_trellis_banded(const char * key, llm_tensor tensor, const char * what, int64_t n_embd, int64_t n_vocab,
+            std::vector<ggml_tensor *> & bands, ggml_tensor *& gather);
 
     // helper: read the SWA pattern as one flag per layer, or as a period expanded by set_swa_pattern
     void load_swa_pattern(llama_model_loader & ml, uint32_t n_pattern, bool dense_first = false);

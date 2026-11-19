@@ -1087,6 +1087,9 @@ struct llm_graph_context {
               ggml_tensor * cur,
               ggml_tensor * w_s = nullptr) const;
 
+    // trellis fork: the logits of a coded lm_head in frequency bands (llama_trellis::bands)
+    ggml_tensor * build_trellis_bands(ggml_tensor * cur) const;
+
     // do mat_mul_id, while optionally apply lora and per-expert scale
     ggml_tensor * build_lora_mm_id(
               ggml_tensor * w,   // ggml_tensor * as

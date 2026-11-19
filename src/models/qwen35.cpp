@@ -37,14 +37,17 @@ void llama_model_qwen35::load_arch_tensors(llama_model_loader & ml) {
     const int trunk_flags = mtp_only ? TENSOR_NOT_REQUIRED : 0;
     int mtp_flags = !ml.load_mtp ? TENSOR_SKIP : 0;
 
-    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, 0);
+    // trellis fork: a coded embedding in frequency bands replaces token_embd.weight
+    if (!create_trellis_embed_bands(n_embd, n_vocab)) {
+        tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, 0);
+    }
 
     // output
     output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), { n_embd }, 0);
     output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), { n_embd, n_vocab }, TENSOR_NOT_REQUIRED);
 
     // if output is NULL, init from the input tok embed
-    if (output == NULL) {
+    if (output == NULL && !create_trellis_bands(n_embd, n_vocab)) {
         output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, TENSOR_DUPLICATED);
     }
 
@@ -216,7 +219,7 @@ llama_model_qwen35::graph::graph(const llama_model & model, const llm_graph_para
     res->t_embd = cur;
 
     // LM head
-    cur = build_lora_mm(model.output, cur, model.output_s);
+    cur = model.trellis.bands.empty() ? build_lora_mm(model.output, cur, model.output_s) : build_trellis_bands(cur);
 
     cb(cur, "result_output", -1);
     res->t_logits = cur;

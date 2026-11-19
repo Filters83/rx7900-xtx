@@ -84,6 +84,8 @@ struct llama_model_loader {
     bool no_alloc;
     bool load_mtp;
 
+    bool trellis_gpu_warned = false; // trellis fork: the warning that the coded linears run on the CPU was given
+
     // handle TENSOR_READ_LAZY
     // use case: keep PLE / engrams embd tensors on disk, read them on demand
     struct lazy_read {
