@@ -1,0 +1,29 @@
+name: NariQ Linux CUDA artifacts
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['app/**', 'cmake/**', 'common/**', 'ggml/**', 'include/**', 'src/**', 'tests/**', 'tools/**', 'vendor/**', 'scripts/**', 'nariq/**', 'CMakeLists.txt', '.github/workflows/nariq-linux.yml']
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: docker/setup-buildx-action@v3
+      - name: Build archives without publishing
+        run: docker buildx build -f nariq/Dockerfile --target artifacts --build-arg JOBS=3 --build-arg NARIQ_SOURCE_REVISION=${{ github.sha }} --output type=local,dest=nariq-dist .
+      - name: Verify archives
+        run: python3 nariq/smoke_package.py nariq-dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nariq-linux-cuda
+          path: nariq-dist/
+          if-no-files-found: error
+          retention-days: 14

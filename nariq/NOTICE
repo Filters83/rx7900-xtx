@@ -1,0 +1,9 @@
+NariQ additions
+Copyright Nari Labs
+
+The NariQ additions are distributed under Apache-2.0 (nariq/LICENSE).
+Upstream llama.cpp code remains under its MIT license (LICENSE).
+The vendored libtrellis copy also carries its Apache-2.0 LICENSE.
+
+NariQ implements trellis-coded quantization described in the QTIP research.
+This notice does not claim that upstream llama.cpp implements or endorses NariQ.

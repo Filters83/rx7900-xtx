@@ -1,0 +1,120 @@
+name: NariQ release image
+# Builds the serving image from the released Linux archives (nariq/Dockerfile, target runtime-release) and smoke-tests
+# it without a GPU. It pushes to ghcr.io only when dispatched with push=true; that is a release step (nariq/PUBLISH.md).
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (empty = nariq/TAG)
+        type: string
+        default: ''
+      source:
+        description: '"release" (the GitHub release of that tag) or "run:<run-id>" (a NariQ Linux CUDA artifacts run, for testing)'
+        type: string
+        default: release
+      push:
+        description: Push the image to ghcr.io
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  actions: read      # gh run download
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+jobs:
+  image:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    outputs:
+      image: ${{ steps.tag.outputs.image }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE: ${{ inputs.source }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve tag
+        id: tag
+        env:
+          TAG_INPUT: ${{ inputs.tag }}
+        run: |
+          TAG="${TAG_INPUT:-$(cat nariq/TAG)}"
+          [[ "$TAG" =~ ^b([0-9]+)-[A-Za-z0-9._-]+$ ]] || { echo "invalid tag: $TAG" >&2; exit 1; }
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=${BASH_REMATCH[1]}" >> "$GITHUB_ENV"
+          echo "IMAGE=ghcr.io/nari-labs/nari-llama.cpp:$TAG" >> "$GITHUB_ENV"
+          echo "image=ghcr.io/nari-labs/nari-llama.cpp:$TAG" >> "$GITHUB_OUTPUT"
+      - name: Download the Linux archives
+        run: |
+          mkdir dl
+          case "$SOURCE" in
+            release)
+              gh release download "$TAG" -R "$GITHUB_REPOSITORY" -D dl -p SHA256SUMS \
+                -p "nari-llama.cpp-$TAG-bin-linux-cuda-*-x64.tar.gz" -p "cudart-nari-llama.cpp-$TAG-linux-cuda-*-x64.tar.gz" ;;
+            run:[0-9]*)
+              gh run download "${SOURCE#run:}" -R "$GITHUB_REPOSITORY" -n nariq-linux-cuda -D dl ;;
+            *) echo "source must be release or run:<run-id>" >&2; exit 1 ;;
+          esac
+          ls -l dl
+      - name: Check the archives against SHA256SUMS
+        run: |
+          # A release's SHA256SUMS also lists the launchers and the Windows zips: keep the two Linux archive lines.
+          mkdir ctx
+          grep -E "^[0-9a-f]{64}  (nari-llama\.cpp-$TAG-bin|cudart-nari-llama\.cpp-$TAG)-linux-cuda-[0-9.]+-x64\.tar\.gz$" \
+            dl/SHA256SUMS > ctx/SHA256SUMS
+          cat ctx/SHA256SUMS
+          [ "$(wc -l < ctx/SHA256SUMS)" = 2 ] || { echo "expected two Linux archive lines" >&2; exit 1; }
+          for f in $(cut -d' ' -f3 ctx/SHA256SUMS); do mv "dl/$f" ctx/; done
+          (cd ctx && sha256sum --strict -c SHA256SUMS)
+      - name: Build the image
+        run: |
+          docker buildx build --provenance=false --sbom=false -f nariq/Dockerfile --target runtime-release \
+            -t "$IMAGE" --load ctx
+          docker image inspect "$IMAGE" --format 'id {{.Id}}, {{len .RootFS.Layers}} layers, {{.Size}} bytes'
+      - name: Smoke test without a GPU
+        run: |
+          docker run --rm --entrypoint /app/llama-server "$IMAGE" --version 2>&1 | tee version.txt
+          # Release archives are built from a git archive and report the tag's build number; CI archives are
+          # built from a clone and report the clone's commit count.
+          if [ "$SOURCE" = release ]; then expect="build $BUILD_NUMBER, commit [0-9a-f]{7,}"; else expect="build [0-9]+, commit [0-9a-f]{7,}"; fi
+          grep -Eq "$expect" version.txt || { echo "--version does not match: $expect" >&2; exit 1; }
+          docker run --rm --entrypoint ls "$IMAGE" -l /app
+          { echo '### Image'; echo; echo "\`$IMAGE\` from \`$SOURCE\`"; echo; echo '```'; cat ctx/SHA256SUMS version.txt; echo '```'; } \
+            >> "$GITHUB_STEP_SUMMARY"
+      - name: Save the image for the push job
+        if: ${{ inputs.push }}
+        run: docker save "$IMAGE" | gzip -1 > image.tar.gz
+      - name: Upload the image
+        if: ${{ inputs.push }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: nariq-image
+          path: image.tar.gz
+          retention-days: 1
+          compression-level: 0
+
+  push:
+    # the only job with packages: write; it pushes the image the image job built and checked
+    needs: image
+    if: ${{ inputs.push }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    permissions:
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      IMAGE: ${{ needs.image.outputs.image }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nariq-image
+      - name: Load the image
+        run: gunzip -c image.tar.gz | docker load
+      - name: Log in to ghcr.io
+        run: echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Push the image
+        run: |
+          docker push "$IMAGE"
+          digest="$(docker image inspect "$IMAGE" --format '{{join .RepoDigests "\n"}}' | grep '^ghcr.io/nari-labs/nari-llama.cpp@')"
+          echo "pushed $digest"
+          { echo; echo "Pushed: \`$digest\`"; } >> "$GITHUB_STEP_SUMMARY"
