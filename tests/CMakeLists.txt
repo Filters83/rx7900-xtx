@@ -310,6 +310,15 @@ endif()
 # TODO: make this test (and others) not link `libllama` as it is not needed [TAG_TESTS_LLAMA_LINK]
 llama_build(test-backend-ops.cpp)
 
+if (GGML_CPU)
+    llama_build_and_test(test-trellis.cpp LABEL "backend")
+    if (GGML_VULKAN)
+        llama_test(test-trellis NAME test-trellis-vulkan LABEL "backend" ARGS Vulkan0)
+    endif()
+    llama_build_and_test(test-trellis-metadata.cpp)
+    llama_build(test-trellis-model.cpp)
+endif()
+
 llama_build_and_test(test-model-load-cancel.cpp LABEL "model")
 llama_build_and_test(test-autorelease.cpp       LABEL "model")
 llama_build_and_test(test-backend-sampler.cpp   LABEL "model")
