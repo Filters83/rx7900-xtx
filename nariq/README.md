@@ -1,8 +1,8 @@
 # NariQ runtime and build tools
 
-This fork adds NariQ trellis-coded Qwen3.8 weights to llama.cpp. It includes TRL1-TRL6 tensor types, the converter, the model loader, CPU operations, native Metal coded products, and CUDA kernels from the vendored Apache-2.0 libtrellis. The NariQ additions retain Apache-2.0 licensing; upstream llama.cpp retains its MIT license. See [NOTICE](NOTICE).
+This fork adds NariQ trellis-coded Qwen3.8 weights to llama.cpp. It includes TRL1-TRL6 tensor types, the converter, the model loader, CPU operations, native Metal coded products, and CUDA kernels from the vendored libtrellis. The NariQ additions are under llama.cpp's MIT license; libtrellis keeps its Apache-2.0 license. See [NOTICE](NOTICE).
 
-The integration is based on upstream b12431 (`a946eb541a6d3051496bdcc451a0fa85772b8dfd`). `TAG` names the release, `b12431-nari2`. Releases, the container image and the model files are published by hand; no workflow in this fork creates a release, and the image workflow pushes to the registry only when dispatched with `push=true`.
+The integration is based on upstream b12431 (`a946eb541a6d3051496bdcc451a0fa85772b8dfd`). `TAG` names the release, `b12431-nariv0`. Releases, the container image and the model files are published by hand; no workflow in this fork creates a release, and the image workflow pushes to the registry only when dispatched with `push=true`.
 
 ## Build this checkout
 

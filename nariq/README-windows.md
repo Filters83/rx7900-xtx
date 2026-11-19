@@ -10,4 +10,4 @@ The server opens a chat page and an OpenAI-compatible API at http://127.0.0.1:80
 
 Native compilation and CPU checks do not establish Windows GPU qualification. See the release notes for the tested hardware and known limitations.
 
-`build-info.json` records the source revision, hashes and build settings. Upstream code is MIT (`LICENSE`); NariQ additions and libtrellis are Apache-2.0 (`LICENSE-NariQ`, `NOTICE-NariQ`, `LICENSE-libtrellis`).
+`build-info.json` records the source revision, hashes and build settings. llama.cpp and the NariQ additions are MIT (`LICENSE`); libtrellis is Apache-2.0 (`LICENSE-libtrellis`); credits, including exllamav3, are in `NOTICE-NariQ` and `LICENSE-exllamav3`.

@@ -42,9 +42,9 @@ trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/$NAME" "$STAGE/$CUDART"
 cp -a "$BUILD/bin/." "$STAGE/$NAME/"
 cp "$ROOT/LICENSE" "$STAGE/$NAME/LICENSE"
-cp "$HERE/LICENSE" "$STAGE/$NAME/LICENSE-NariQ"
 cp "$HERE/NOTICE" "$STAGE/$NAME/NOTICE-NariQ"
 cp "$ROOT/ggml/src/ggml-cuda/libtrellis/LICENSE" "$STAGE/$NAME/LICENSE-libtrellis"
+cp "$ROOT/licenses/LICENSE-exllamav3" "$STAGE/$NAME/LICENSE-exllamav3"
 cp "$HERE/README-release.md" "$STAGE/$NAME/README.md"
 for lib in libcudart.so.12 libcublas.so.12 libcublasLt.so.12; do
     cp -L "${CUDA_HOME:-/usr/local/cuda}/lib64/$lib" "$STAGE/$CUDART/"

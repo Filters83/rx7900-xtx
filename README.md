@@ -6,12 +6,12 @@ the TRL1-TRL6 tensor types, the model loader, checkpoint conversion, CPU operati
 and experimental Metal kernels. Stock llama.cpp, Ollama and LM Studio cannot load these files.
 
 This branch is based on upstream b12431 (`a946eb5`). The current release is
-[`b12431-nari2`](https://github.com/nari-labs/nari-llama.cpp/releases/tag/b12431-nari2).
+[`b12431-nariv0`](https://github.com/nari-labs/nari-llama.cpp/releases/tag/b12431-nariv0).
 
 ## Quick start (Linux x86-64, NVIDIA GPU)
 
 ```sh
-curl -fsSLO https://github.com/nari-labs/nari-llama.cpp/releases/download/b12431-nari2/run.sh
+curl -fsSLO https://github.com/nari-labs/nari-llama.cpp/releases/download/b12431-nariv0/run.sh
 bash run.sh 3.0   # or 2.5, 2.0
 ```
 
@@ -22,7 +22,7 @@ It needs an NVIDIA driver of 570 or newer, glibc 2.34 or newer and libstdc++ wit
 
 ## Prebuilt binaries
 
-The [release page](https://github.com/nari-labs/nari-llama.cpp/releases/tag/b12431-nari2) has the Linux x86-64 CUDA 12.8
+The [release page](https://github.com/nari-labs/nari-llama.cpp/releases/tag/b12431-nariv0) has the Linux x86-64 CUDA 12.8
 archives (programs and CUDA runtime), `run.sh` and a `SHA256SUMS` over all assets. Extract both archives into one
 folder, then:
 
@@ -37,7 +37,7 @@ archives and `run.ps1`. They are experimental: built and checked on the CPU, nev
 ## Docker
 
 ```sh
-docker run --rm --gpus all -p 127.0.0.1:8080:8080 -v "$PWD:/models:ro" ghcr.io/nari-labs/nari-llama.cpp:b12431-nari2 \
+docker run --rm --gpus all -p 127.0.0.1:8080:8080 -v "$PWD:/models:ro" ghcr.io/nari-labs/nari-llama.cpp:b12431-nariv0 \
     -m /models/Qwen3.8-27B-NariQ-3.0bpw.gguf --mmproj /models/Qwen3.8-27B-NariQ-mmproj-BF16.gguf \
     --fit-target 2560 --host 0.0.0.0 --port 8080
 ```
@@ -93,5 +93,6 @@ General llama.cpp documentation is in [docs](docs/) and the [upstream project](h
 Upstream installers and distributions do not include the NariQ tensor types, and upstream llama.cpp does not endorse
 this fork.
 
-Upstream llama.cpp code stays under its [MIT license](LICENSE). The NariQ additions and the vendored libtrellis are
-under [Apache-2.0](nariq/LICENSE); see [NOTICE](nariq/NOTICE).
+The NariQ additions are under the same [MIT license](LICENSE) as llama.cpp. The vendored libtrellis keeps its own
+[Apache-2.0 license](ggml/src/ggml-cuda/libtrellis/LICENSE). The coded weight layout follows
+[exllamav3](https://github.com/turboderp-org/exllamav3) (MIT); see [NOTICE](nariq/NOTICE).

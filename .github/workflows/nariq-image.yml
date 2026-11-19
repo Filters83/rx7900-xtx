@@ -1,6 +1,6 @@
 name: NariQ release image
 # Builds the serving image from the released Linux archives (nariq/Dockerfile, target runtime-release) and smoke-tests
-# it without a GPU. It pushes to ghcr.io only when dispatched with push=true; that is a release step (nariq/PUBLISH.md).
+# it without a GPU. It pushes to ghcr.io only when dispatched with push=true; that is a release step.
 on:
   workflow_dispatch:
     inputs:
@@ -14,6 +14,10 @@ on:
         default: release
       push:
         description: Push the image to ghcr.io
+        type: boolean
+        default: false
+      save:
+        description: Keep the image as a one-day artifact (docker save) without pushing it
         type: boolean
         default: false
 permissions:
@@ -82,10 +86,10 @@ jobs:
           { echo '### Image'; echo; echo "\`$IMAGE\` from \`$SOURCE\`"; echo; echo '```'; cat ctx/SHA256SUMS version.txt; echo '```'; } \
             >> "$GITHUB_STEP_SUMMARY"
       - name: Save the image for the push job
-        if: ${{ inputs.push }}
+        if: ${{ inputs.push || inputs.save }}
         run: docker save "$IMAGE" | gzip -1 > image.tar.gz
       - name: Upload the image
-        if: ${{ inputs.push }}
+        if: ${{ inputs.push || inputs.save }}
         uses: actions/upload-artifact@v4
         with:
           name: nariq-image

@@ -2,13 +2,14 @@ llama.cpp b12431 (`a946eb5`) with NariQ trellis-coded weights. This is the runti
 [Qwen3.8-27B NariQ GGUFs](https://huggingface.co/nari-labs/Qwen3.8-27B-NariQ-GGUF) at 3.0, 2.5 and 2.0 bits per weight.
 Stock llama.cpp, Ollama and LM Studio cannot load those files.
 
-The binaries of `b12431-nari2` were built from commit `642881a` with CUDA 12.8. Later commits up to the tag change
-only documentation, the launchers and the release scripts.
+The binaries of `b12431-nariv0` were built from commit `9fc1bfa` with CUDA 12.8 (`build-info.json` names it `30f794c`:
+the same source tree, before the commit messages were reworded). Later commits up to the tag change only documentation,
+CI and the license files.
 
 ## Quick start (Linux, NVIDIA GPU)
 
 ```bash
-curl -fsSLO https://github.com/nari-labs/nari-llama.cpp/releases/download/b12431-nari2/run.sh
+curl -fsSLO https://github.com/nari-labs/nari-llama.cpp/releases/download/b12431-nariv0/run.sh
 bash run.sh 3.0   # or 2.5, 2.0
 ```
 
@@ -21,8 +22,8 @@ To set it up yourself:
 
 ```bash
 mkdir nari-llama.cpp
-tar -xzf nari-llama.cpp-b12431-nari2-bin-linux-cuda-12.8-x64.tar.gz --strip-components=1 -C nari-llama.cpp
-tar -xzf cudart-nari-llama.cpp-b12431-nari2-linux-cuda-12.8-x64.tar.gz --strip-components=1 -C nari-llama.cpp
+tar -xzf nari-llama.cpp-b12431-nariv0-bin-linux-cuda-12.8-x64.tar.gz --strip-components=1 -C nari-llama.cpp
+tar -xzf cudart-nari-llama.cpp-b12431-nariv0-linux-cuda-12.8-x64.tar.gz --strip-components=1 -C nari-llama.cpp
 hf download nari-labs/Qwen3.8-27B-NariQ-GGUF \
     Qwen3.8-27B-NariQ-3.0bpw.gguf Qwen3.8-27B-NariQ-mmproj-BF16.gguf --local-dir .
 ./nari-llama.cpp/llama-server -m Qwen3.8-27B-NariQ-3.0bpw.gguf --mmproj Qwen3.8-27B-NariQ-mmproj-BF16.gguf \
@@ -34,7 +35,7 @@ Pass `--port 8080` explicitly: without it, this llama.cpp version listens on por
 use `-c 262144` on 32 GB or more, or leave `-c` out to fit the context to free memory.
 
 Docker (needs the NVIDIA Container Toolkit): `bash run.sh 3.0 --docker` runs
-`ghcr.io/nari-labs/nari-llama.cpp:b12431-nari2`, whose entry point is `llama-server`.
+`ghcr.io/nari-labs/nari-llama.cpp:b12431-nariv0`, whose entry point is `llama-server`.
 
 ## Models
 
@@ -51,7 +52,7 @@ Scores, sampling settings and memory use are on the
 ## What's in this release
 
 - **NariQ tensor types TRL1-TRL6** (1-6-bit trellis codes with scales, permutations and Hadamard transforms), the
-  model loader and a converter for existing NariQ checkpoints. Format: [`nariq/FORMAT.md`](https://github.com/nari-labs/nari-llama.cpp/blob/b12431-nari2/nariq/FORMAT.md).
+  model loader and a converter for existing NariQ checkpoints. Format: [`nariq/FORMAT.md`](https://github.com/nari-labs/nari-llama.cpp/blob/b12431-nariv0/nariq/FORMAT.md).
 - **CUDA kernels** from the vendored libtrellis for NVIDIA GPUs of compute capability 8.0 or newer. Coded embedding
   lookups run on the CPU.
 - **Single-token decode tuning (Nov 18):** fused rotations and gathers around the coded GEMV, an ADD + SOFTPLUS + MUL
@@ -65,16 +66,16 @@ Scores, sampling settings and memory use are on the
 - **CPU path:** every coded operation also runs on the CPU. The Linux archive carries all x86-64 CPU variants and
   picks the best one at start.
 - **Metal (experimental, build from source):** native coded products on Apple GPUs; see
-  [`nariq/README-metal.md`](https://github.com/nari-labs/nari-llama.cpp/blob/b12431-nari2/nariq/README-metal.md).
+  [`nariq/README-metal.md`](https://github.com/nari-labs/nari-llama.cpp/blob/b12431-nariv0/nariq/README-metal.md).
 - The llama-server chat page, pinned by sha256.
 
 ## Platforms
 
 | Platform | Download | Status |
 | --- | --- | --- |
-| Linux x86-64, NVIDIA, CUDA 12.8 | `nari-llama.cpp-b12431-nari2-bin-linux-cuda-12.8-x64.tar.gz` + `cudart-...-linux-cuda-12.8-x64.tar.gz` | Tested with this build on RTX PRO 6000, H100, L4 and A10, all three files, through `run.sh` and the manual command. B200, A100 and L40S ran an earlier build of this release line. |
+| Linux x86-64, NVIDIA, CUDA 12.8 | `nari-llama.cpp-b12431-nariv0-bin-linux-cuda-12.8-x64.tar.gz` + `cudart-...-linux-cuda-12.8-x64.tar.gz` | Tested with this build on RTX PRO 6000, H100, L4 and A10, all three files, through `run.sh` and the manual command. B200, A100 and L40S ran an earlier build of this release line. |
 <!-- windows -->
-| Windows x86-64, NVIDIA, CUDA 12.8 | `nari-llama.cpp-b12431-nari2-bin-win-cuda-12.8-x64.zip` + `cudart-...-win-cuda-12.8-x64.zip` | **Experimental.** Built and CPU-checked on GitHub's Windows runner; never run on a Windows GPU. |
+| Windows x86-64, NVIDIA, CUDA 12.8 | `nari-llama.cpp-b12431-nariv0-bin-win-cuda-12.8-x64.zip` + `cudart-...-win-cuda-12.8-x64.zip` | **Experimental.** Built and CPU-checked on GitHub's Windows runner; never run on a Windows GPU. |
 <!-- /windows -->
 <!-- linux-only -->
 | Windows x86-64 | none yet | Windows archives are not part of this release yet. |
@@ -130,10 +131,10 @@ for the 3.0, 2.5 and 2.0bpw files.
 - Windows archives are experimental: never run on a Windows GPU.
 <!-- /windows -->
 - macOS is experimental and build-from-source only. GeForce cards are untested.
-- Same-weight parity: against a dense F32 decode of the same coded weights, an earlier build of this release line
-  passed mean KL <= 0.001 and top-1 agreement >= 98% for all three files. A BF16 reference exceeds the KL limit
+- Same-weight parity: against a dense F32 decode of the same coded weights, these binaries pass mean KL <= 0.001
+  and top-1 agreement >= 98% for all three files. A BF16 reference exceeds the KL limit
   because of BF16 rounding; both results are in
-  [`nariq/cuda-qualification.md`](https://github.com/nari-labs/nari-llama.cpp/blob/b12431-nari2/nariq/cuda-qualification.md).
+  [`nariq/cuda-qualification.md`](https://github.com/nari-labs/nari-llama.cpp/blob/b12431-nariv0/nariq/cuda-qualification.md).
 
 ## Checksums
 
@@ -142,6 +143,7 @@ for the 3.0, 2.5 and 2.0bpw files.
 
 ## License
 
-The llama.cpp code is under the MIT license (`LICENSE`). The NariQ additions and the vendored libtrellis are under
-Apache-2.0 (`nariq/LICENSE`, `nariq/NOTICE`; in the archives `LICENSE-NariQ`, `NOTICE-NariQ` and
-`LICENSE-libtrellis`). The model files inherit the base model's Apache-2.0 license.
+The llama.cpp code and the NariQ additions are under the MIT license (`LICENSE`). The vendored libtrellis is under
+Apache-2.0 (`LICENSE-libtrellis` in the archives). The coded weight layout follows exllamav3 (MIT); credits are in
+`nariq/NOTICE` (`NOTICE-NariQ`) and `licenses/LICENSE-exllamav3` (`LICENSE-exllamav3`). The model files inherit the
+base model's Apache-2.0 license.

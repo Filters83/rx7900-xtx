@@ -21,7 +21,7 @@ if [ "${BASH_VERSINFO[0]}" -lt 4 ] || [ "$(uname -s)" != Linux ] || [ "$(uname -
     exit 2
 fi
 
-TAG="${TRELLIS_TAG:-b12431-nari2}"   # the release tag (nari-labs/nari-llama.cpp)
+TAG="${TRELLIS_TAG:-b12431-nariv0}"   # the release tag (nari-labs/nari-llama.cpp)
 RELEASE_URL="${TRELLIS_RELEASE_URL:-https://github.com/nari-labs/nari-llama.cpp/releases/download/$TAG}"
 MODEL_URL="${TRELLIS_MODEL_URL:-https://huggingface.co/nari-labs/Qwen3.8-27B-NariQ-GGUF/resolve/main}"
 IMAGE="${TRELLIS_IMAGE:-ghcr.io/nari-labs/nari-llama.cpp:$TAG}"

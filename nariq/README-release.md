@@ -21,5 +21,5 @@ This opens a chat page and an OpenAI-compatible API at http://127.0.0.1:8080 (wi
 default is 9931). Without `-c`, the context is the longest
 that free GPU memory holds, up to 262,144 tokens.
 
-`build-info.json` gives the source revision and hashes. The llama.cpp parts are under
-the MIT license (`LICENSE`); NariQ additions and libtrellis are Apache-2.0 (`LICENSE-NariQ`, `NOTICE-NariQ`, `LICENSE-libtrellis`).
+`build-info.json` gives the source revision and hashes. llama.cpp and the NariQ additions are under
+the MIT license (`LICENSE`); libtrellis is Apache-2.0 (`LICENSE-libtrellis`); credits, including exllamav3, are in `NOTICE-NariQ` and `LICENSE-exllamav3`.

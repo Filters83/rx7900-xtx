@@ -24,7 +24,7 @@ $ErrorActionPreference = "Stop"
 $Aliases = @{ "3.0bpw" = "3.0"; "2.5bpw" = "2.5"; "2.0bpw" = "2.0"; "3bit" = "3.0"; "2.5bit" = "2.5"; "2bit" = "2.0" }
 if ($Aliases.ContainsKey($Budget)) { $Budget = $Aliases[$Budget] }
 
-$Tag = if ($env:TRELLIS_TAG) { $env:TRELLIS_TAG } else { "b12431-nari2" }  # the release tag
+$Tag = if ($env:TRELLIS_TAG) { $env:TRELLIS_TAG } else { "b12431-nariv0" }  # the release tag
 $ReleaseUrl = if ($env:TRELLIS_RELEASE_URL) { $env:TRELLIS_RELEASE_URL } else { "https://github.com/nari-labs/nari-llama.cpp/releases/download/$Tag" }
 $ModelUrl = if ($env:TRELLIS_MODEL_URL) { $env:TRELLIS_MODEL_URL } else { "https://huggingface.co/nari-labs/Qwen3.8-27B-NariQ-GGUF/resolve/main" }
 $HomeDir = if ($env:TRELLIS_HOME) { $env:TRELLIS_HOME } else { Join-Path $env:LOCALAPPDATA "nari-llama.cpp" }
