@@ -366,6 +366,17 @@ endif()
 
 llama_build(test-backend-ops.cpp LINK ggml Threads::Threads)
 
+if (GGML_CPU)
+    # trellis fork: the coded ops against the host reference; pass a backend name to test a device and mixed CPU/device graphs
+    llama_build_and_test(test-trellis.cpp  LABEL "main behavior backend"  LINK ggml)
+    if (GGML_METAL)
+        llama_test(test-trellis  NAME test-trellis-metal  LABEL "main behavior backend"  ARGS MTL0)
+    endif()
+    llama_build_and_test(test-trellis-metadata.cpp  LABEL "main behavior"  LINK llama ggml)
+    # full-model check that needs --model and --output, not registered as a test (run it manually)
+    llama_build(test-trellis-model.cpp  LINK llama ggml vendor::nlohmann)
+endif()
+
 llama_build_and_test(test-backend-tensor.cpp LINK ggml)
 
 if (BUILD_SHARED_LIBS)
