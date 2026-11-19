@@ -5538,6 +5538,17 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
                 GGML_UNUSED(data);
                 GGML_UNUSED(nb);
             } break;
+        case GGML_TYPE_TRL1:
+        case GGML_TYPE_TRL2:
+        case GGML_TYPE_TRL3:
+        case GGML_TYPE_TRL4:
+        case GGML_TYPE_TRL5:
+        case GGML_TYPE_TRL6:
+            {
+                // trellis fork: every bit pattern is a valid code
+                GGML_UNUSED(data);
+                GGML_UNUSED(nb);
+            } break;
         case GGML_TYPE_Q2_K:
             {
                 VALIDATE_ROW_DATA_DM_F16_IMPL(block_q2_K, data, nb, d, dmin);
