@@ -37,7 +37,10 @@ void llama_model_qwen35::load_arch_tensors(llama_model_loader & ml) {
     const int trunk_flags = nf.trunk;
     const int mtp_flags   = nf.mtp;
 
-    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, 0);
+    // trellis fork: a coded embedding in frequency bands replaces token_embd.weight
+    if (!create_trellis_embed_bands(n_embd, n_vocab)) {
+        tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, 0);
+    }
 
     // output
     output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), { n_embd }, 0);
@@ -47,8 +50,9 @@ void llama_model_qwen35::load_arch_tensors(llama_model_loader & ml) {
     cls_out   = create_tensor(tn(LLM_TENSOR_CLS_OUT, "weight"), { n_embd, hparams.n_embd_out() }, TENSOR_NOT_REQUIRED);
     cls_out_b = create_tensor(tn(LLM_TENSOR_CLS_OUT, "bias"),   { hparams.n_embd_out() },         TENSOR_NOT_REQUIRED);
 
+    // trellis fork: a coded lm_head in frequency bands replaces output.weight
     // if output is NULL, init from the input tok embed
-    if (output == NULL) {
+    if (output == NULL && !create_trellis_bands(n_embd, n_vocab)) {
         output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, TENSOR_DUPLICATED);
     }
 
@@ -234,7 +238,7 @@ llama_model_qwen35::graph::graph(const llm_graph_params & params) :
     }
 
     // LM head
-    cur = build_lora_mm(model.output, cur, model.output_s);
+    cur = model.trellis.bands.empty() ? build_lora_mm(model.output, cur, model.output_s) : build_trellis_bands(cur);
 
     cb(cur, "result_output", -1);
     res->t_logits = cur;
@@ -416,9 +420,24 @@ ggml_tensor * llama_model_qwen35::graph::build_layer_attn_linear(
     const int64_t conv_kernel_size = conv_kernel->ne[0];
     const int64_t conv_channels    = d_inner + 2 * hparams.ssm_n_group * hparams.ssm_d_state;
 
-    ggml_tensor * conv_input = build_conv_state(inp, conv_states_all, qkv_mixed, conv_kernel_size, conv_channels, il);
+    // decode of the only sequence of a one-slot cache: the convolution and the delta net read their cached states in
+    // place instead of gathered copies (can_reuse checks rs_z, so a reused graph keeps this choice valid)
+    // TODO: enabled for models with coded linears only until it is measured on others
+    const bool state_in_place = !model.trellis.weights.empty() && n_seq_tokens == 1 && n_seqs == 1 &&
+        cparams.n_rs_seq == 0 && ssm_states_all->ne[1] == 1 && ssm_states_all->type == GGML_TYPE_F32 &&
+        mctx_cur->get_rs_z() < 0;
 
-    ggml_tensor * state = build_rs(inp, ssm_states_all, hparams.n_embd_s(), n_seqs);
+    ggml_tensor * conv_input = nullptr;
+    if (state_in_place && conv_states_all->ne[1] == 1) {
+        ggml_tensor * conv_states = ggml_reshape_3d(ctx0, conv_states_all, conv_kernel_size - 1, conv_channels, 1);
+        conv_input = ggml_concat(ctx0, conv_states, ggml_transpose(ctx0, qkv_mixed), 0);
+        cb(conv_input, "conv_input", il);
+        build_conv_state_store(inp, conv_states_all, conv_input, conv_kernel_size - 1, 0);
+    } else {
+        conv_input = build_conv_state(inp, conv_states_all, qkv_mixed, conv_kernel_size, conv_channels, il);
+    }
+
+    ggml_tensor * state = state_in_place ? ssm_states_all : build_rs(inp, ssm_states_all, hparams.n_embd_s(), n_seqs);
     state = ggml_reshape_4d(ctx0, state, head_v_dim, head_v_dim, num_v_heads, n_seqs);
     cb(state, "state_predelta", il);
 
@@ -460,8 +479,17 @@ ggml_tensor * llama_model_qwen35::graph::build_layer_attn_linear(
 
     const float eps_norm = hparams.f_norm_rms_eps;
 
-    q_conv = build_gdn_l2_norm(ctx0, q_conv, eps_norm);
-    k_conv = build_gdn_l2_norm(ctx0, k_conv, eps_norm);
+    // one token: q and k are adjacent heads of equal width in the convolved row, so one norm covers both
+    // TODO: enabled for models with coded linears only until it is measured on others
+    if (!model.trellis.weights.empty() && n_seq_tokens == 1 && n_seqs == 1) {
+        ggml_tensor * qk = ggml_view_2d(ctx0, conv_qkv_mix, head_k_dim, 2*num_k_heads, q_conv->nb[1], q_conv->view_offs);
+        qk = build_gdn_l2_norm(ctx0, qk, eps_norm);
+        q_conv = ggml_view_2d(ctx0, qk, head_k_dim, num_k_heads, qk->nb[1], 0);
+        k_conv = ggml_view_2d(ctx0, qk, head_k_dim, num_k_heads, qk->nb[1], num_k_heads*qk->nb[1]);
+    } else {
+        q_conv = build_gdn_l2_norm(ctx0, q_conv, eps_norm);
+        k_conv = build_gdn_l2_norm(ctx0, k_conv, eps_norm);
+    }
 
     //q_conv = ggml_cont_4d(ctx0, q_conv, head_k_dim, num_k_heads, n_seq_tokens, n_seqs);
     //k_conv = ggml_cont_4d(ctx0, k_conv, head_k_dim, num_k_heads, n_seq_tokens, n_seqs);
