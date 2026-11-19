@@ -29,6 +29,7 @@
 #include "ggml-cuda/fattn.cuh"
 #include "ggml-cuda/fp8.cuh"
 #include "ggml-cuda/fwht.cuh"
+#include "ggml-cuda/trellis.cuh"
 #include "ggml-cuda/getrows.cuh"
 #include "ggml-cuda/im2col.cuh"
 #include "ggml-cuda/mmf.cuh"
@@ -2830,6 +2831,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
                     return false;
             }
             break;
+        case GGML_OP_TRELLIS:
+            ggml_cuda_op_trellis(ctx, dst);
+            break;
         case GGML_OP_GLU:
             switch (ggml_get_glu_op(dst)) {
                 case GGML_GLU_OP_REGLU:
@@ -4278,6 +4282,26 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph *                cgraph,
         return true;
     }
 
+    if (ops.size() == 3 && ops.begin()[0] == GGML_OP_ADD && ops.begin()[1] == GGML_OP_UNARY && ops.begin()[2] == GGML_OP_MUL
+     && unary_ops.size() == 1 && unary_ops.begin()[0] == GGML_UNARY_OP_SOFTPLUS) {
+        const ggml_tensor * add   = cgraph->nodes[node_idx];
+        const ggml_tensor * unary = cgraph->nodes[node_idx+1];
+        const ggml_tensor * mul   = cgraph->nodes[node_idx+2];
+
+        if (ggml_get_unary_op(unary) != GGML_UNARY_OP_SOFTPLUS || unary->src[0] != add) {
+            return false;
+        }
+        const ggml_tensor * other = (mul->src[0] == unary) ? mul->src[1] : mul->src[0];
+        // the fused kernel reads its three inputs densely and does not broadcast
+        const ggml_tensor * const dense[] = { add->src[0], add->src[1], other, mul };
+        for (const ggml_tensor * t : dense) {
+            if (t->type != GGML_TYPE_F32 || !ggml_is_contiguous(t) || !ggml_are_same_shape(t, add)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     if (ops.size() == 2 && ops.begin()[0] == GGML_OP_UNARY && ops.begin()[1] == GGML_OP_SQR
      && unary_ops.size() == 1 && unary_ops.begin()[0] == GGML_UNARY_OP_RELU) {
         const ggml_tensor * unary = cgraph->nodes[node_idx];
@@ -4333,6 +4357,48 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph *                cgraph,
     return false;
 }
 
+// ADD, then RMS_NORM of the sum, then MUL of the norm, with the sum used later as well (a residual stream)
+static bool ggml_cuda_can_fuse_add_rms_norm_mul(const ggml_cgraph * cgraph, int i) {
+    const ggml_op ops[3]     = { GGML_OP_ADD, GGML_OP_RMS_NORM, GGML_OP_MUL };
+    const int     outputs[2] = { i, i + 2 };
+    if (!ggml_can_fuse_subgraph(cgraph, i, 3, ops, outputs, 2)) {
+        return false;
+    }
+    const ggml_tensor * add  = cgraph->nodes[i];
+    const ggml_tensor * norm = cgraph->nodes[i + 1];
+    const ggml_tensor * mul  = cgraph->nodes[i + 2];
+    if (norm->src[0] != add || (mul->src[0] != norm && mul->src[1] != norm)) {
+        return false;
+    }
+    const ggml_tensor * weight = mul->src[0] == norm ? mul->src[1] : mul->src[0];
+    for (const ggml_tensor * t : std::initializer_list<const ggml_tensor *>{ add->src[0], add->src[1], add, norm, mul }) {
+        if (t->type != GGML_TYPE_F32 || !ggml_is_contiguous(t) || !ggml_are_same_shape(t, add)) {
+            return false;
+        }
+    }
+    if (weight->type != GGML_TYPE_F32 || !ggml_is_contiguous(weight) || weight->ne[0] != add->ne[0] || ggml_nrows(weight) != 1) {
+        return false;
+    }
+    // each thread reads every input at an index before it writes the outputs at that index,
+    // so an output may alias an input exactly, but no tensor may overlap another one partially
+    auto overlap = [](const ggml_tensor * a, const ggml_tensor * b) {
+        const char * a0 = (const char *) a->data;
+        const char * b0 = (const char *) b->data;
+        return a0 < b0 + ggml_nbytes(b) && b0 < a0 + ggml_nbytes(a);
+    };
+    for (const ggml_tensor * out : { add, mul }) {
+        for (const ggml_tensor * in : std::initializer_list<const ggml_tensor *>{ add->src[0], add->src[1] }) {
+            if (in->data != out->data && overlap(in, out)) {
+                return false;
+            }
+        }
+        if (overlap(weight, out)) {
+            return false;
+        }
+    }
+    return !overlap(add, mul);
+}
+
 // try and fuse nodes and return the number of nodes to skip
 static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph, int i) {
 
@@ -4341,6 +4407,32 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
     }
 
     ggml_tensor * node = cgraph->nodes[i];
+
+    // measured for single-token decode of models with coded linears only, so not enabled for other graphs yet
+    if (node->op == GGML_OP_ADD && cuda_ctx->graph_has_trellis_op && ggml_nrows(node) == 1 &&
+            cuda_ctx->stream_context().concurrent_events.empty() && ggml_cuda_can_fuse_add_rms_norm_mul(cgraph, i)) {
+        ggml_cuda_op_add_rms_norm_fused(*cuda_ctx, node, cgraph->nodes[i + 1], cgraph->nodes[i + 2]);
+        return 2;
+    }
+
+    // trellis fork: an MLP's up/gate, swiglu and down as one chain; consecutive coded linears of one x as an input group
+    if (node->op == GGML_OP_TRELLIS && cuda_ctx->stream_context().concurrent_events.empty()) {
+        if (ggml_cuda_trellis_mlp_chain(cgraph, i) == 4) {
+            ggml_cuda_op_trellis_mlp_chain(*cuda_ctx, cgraph->nodes + i);
+            return 3;
+        }
+        const int n = ggml_cuda_trellis_group_size(cgraph, i);
+        if (n > 1) {
+            int outputs[TRELLIS_GROUP_MAX];
+            for (int j = 0; j < n; ++j) {
+                outputs[j] = i + j;
+            }
+            if (ggml_cuda_check_fusion_memory_ranges(cgraph, i, n, outputs, n)) {
+                ggml_cuda_op_trellis_group(*cuda_ctx, cgraph->nodes + i, n);
+                return n - 1;
+            }
+        }
+    }
 
     if (node->op == GGML_OP_MUL_MAT_ID && cuda_ctx->stream_context().concurrent_events.empty() &&
             ggml_cuda_match_shared_expert(cgraph, i, i + 3) &&
@@ -5143,6 +5235,13 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
         return 1;
     }
 
+    // softplus(x + b) * g (a delta-net gate); measured for single-token decode of models with coded linears only
+    if (node->op == GGML_OP_ADD && cuda_ctx->graph_has_trellis_op &&
+        ggml_cuda_can_fuse(cgraph, i, { GGML_OP_ADD, GGML_OP_UNARY, GGML_OP_MUL }, { GGML_UNARY_OP_SOFTPLUS })) {
+        ggml_cuda_op_add_softplus_mul(*cuda_ctx, node, cgraph->nodes[i + 1], cgraph->nodes[i + 2]);
+        return 2;
+    }
+
     if (ggml_cuda_can_fuse(cgraph, i, { GGML_OP_UNARY, GGML_OP_MUL }, { GGML_UNARY_OP_SILU }) ||
         ggml_cuda_can_fuse(cgraph, i, { GGML_OP_UNARY, GGML_OP_MUL }, { GGML_UNARY_OP_SIGMOID }) ||
         ggml_cuda_can_fuse(cgraph, i, { GGML_OP_UNARY, GGML_OP_MUL }, { GGML_UNARY_OP_SOFTPLUS })) {
@@ -5418,6 +5517,14 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, 
     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backend->context;
 
     ggml_cuda_set_device(cuda_ctx->device);
+
+    cuda_ctx->graph_has_trellis_op = false;
+    for (int i = 0; i < cgraph->n_nodes; ++i) {
+        if (cgraph->nodes[i]->op == GGML_OP_TRELLIS) {
+            cuda_ctx->graph_has_trellis_op = true;
+            break;
+        }
+    }
 
     bool use_cuda_graph             = false;
     bool cuda_graph_update_required = false;
@@ -6256,11 +6363,19 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                 default:
                     return false;
             }
+        case GGML_OP_TRELLIS:
+            // trellis fork: libtrellis's GEMV / GEMM need sm_80+ (the loader probes this op for a coded weight)
+            return ggml_cuda_trellis_supported(op) && ggml_cuda_info().devices[dev_ctx->device].cc >= GGML_CUDA_CC_AMPERE;
+        case GGML_OP_TRELLIS_GET_ROWS:
+            return false; // trellis fork: the coded embedding stays in host memory (CPU op)
         case GGML_OP_MUL_MAT:
         case GGML_OP_MUL_MAT_ID:
             {
                 struct ggml_tensor * a = op->src[0];
                 struct ggml_tensor * b = op->src[1];
+                if (ggml_is_trellis_type(a->type)) {
+                    return false; // trellis fork: a coded weight is only ever read by GGML_OP_TRELLIS
+                }
                 if (a->nb[0] != ggml_element_size(a) || b->nb[0] != ggml_element_size(b)) {
                     return false; // TODO this could in principle be implemented though currently there is no use case.
                 }
