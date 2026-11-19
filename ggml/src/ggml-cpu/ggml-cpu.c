@@ -10,6 +10,7 @@
 #include "ggml-threading.h"
 #include "unary-ops.h"
 #include "binary-ops.h"
+#include "trellis.h"
 #include "vec.h"
 #include "ops.h"
 #include "ggml.h"
@@ -2069,6 +2070,14 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             {
                 ggml_compute_forward_glu(params, tensor);
             } break;
+        case GGML_OP_TRELLIS_GET_ROWS:
+            {
+                ggml_compute_forward_trellis_get_rows(params, tensor);
+            } break;
+        case GGML_OP_TRELLIS:
+            {
+                ggml_compute_forward_trellis(params, tensor);
+            } break;
         case GGML_OP_GET_REL_POS:
             {
                 ggml_compute_forward_get_rel_pos(params, tensor);
@@ -2373,6 +2382,8 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
         case GGML_OP_MUL_MAT_ID:
         case GGML_OP_OUT_PROD:
         case GGML_OP_SET_ROWS:
+        case GGML_OP_TRELLIS_GET_ROWS:
+        case GGML_OP_TRELLIS:
             {
                 n_tasks = n_threads;
             } break;
@@ -3037,6 +3048,15 @@ struct ggml_cplan ggml_graph_plan(
                         const int64_t K   = ggml_get_op_params_i32(node, 0);
                         const int64_t per_thread = S_v + (K > 1 ? S_v * S_v : 0);
                         cur = per_thread * sizeof(float) * n_tasks;
+                    } break;
+                case GGML_OP_TRELLIS:
+                    {
+                        // trellis fork: rotated inputs, the product before an output gather, per-thread scratch
+                        cur = ggml_compute_forward_trellis_work_size(node, n_tasks);
+                    } break;
+                case GGML_OP_TRELLIS_GET_ROWS:
+                    {
+                        cur = ggml_compute_forward_trellis_get_rows_work_size(node, n_tasks);
                     } break;
                 case GGML_OP_COUNT:
                     {
