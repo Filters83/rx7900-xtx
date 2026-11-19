@@ -5939,6 +5939,12 @@ void ggml_compute_forward_clamp(
         case GGML_TYPE_I32:
         case GGML_TYPE_I64:
         case GGML_TYPE_F64:
+        case GGML_TYPE_TRL1: // trellis fork: coded weights are not clamped
+        case GGML_TYPE_TRL2:
+        case GGML_TYPE_TRL3:
+        case GGML_TYPE_TRL4:
+        case GGML_TYPE_TRL5:
+        case GGML_TYPE_TRL6:
         case GGML_TYPE_COUNT:
             {
                 GGML_ABORT("fatal error");
