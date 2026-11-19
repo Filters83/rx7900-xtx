@@ -5,6 +5,7 @@
 #import "ggml-backend-impl.h"
 #import "ggml-metal-impl.h"
 #import "ggml-metal-common.h"
+#import "ggml-metal-ops.h"
 
 #include <Foundation/Foundation.h>
 
@@ -145,6 +146,7 @@ int ggml_metal_pipeline_max_theads_per_threadgroup(struct ggml_metal_pipeline_wi
     X(UPSCALE,         upscale)        \
     X(ARGSORT,         argsort)        \
     X(POOL,            pool)           \
+    X(TRELLIS,         trellis)        \
     X(MISC,            misc)
 
 enum ggml_metal_lib_kind {
@@ -1566,7 +1568,24 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
         }
     }
 
+    // the trellis types have no generic kernels: only the trellis ops read them
+    if (op->op != GGML_OP_TRELLIS && op->op != GGML_OP_TRELLIS_GET_ROWS) {
+        if (ggml_is_trellis_type(op->type)) {
+            return false;
+        }
+        for (int i = 0; i < GGML_MAX_SRC; i++) {
+            if (op->src[i] != NULL && ggml_is_trellis_type(op->src[i]->type)) {
+                return false;
+            }
+        }
+    }
+
     switch (op->op) {
+        case GGML_OP_TRELLIS:
+            // all product kernels use SIMD-group reductions; only the mm kernel uses simdgroup matrices (use_mm checks it again)
+            return has_simdgroup_mm && has_simdgroup_reduction && ggml_metal_op_trellis_supported(op);
+        case GGML_OP_TRELLIS_GET_ROWS:
+            return false;
         case GGML_OP_SCALE:
             return ggml_is_contiguous_rows(op->src[0]) && (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16 || op->src[0]->type == GGML_TYPE_BF16);
         case GGML_OP_FILL:

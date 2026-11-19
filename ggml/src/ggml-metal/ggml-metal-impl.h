@@ -186,6 +186,8 @@
 #define OP_SSM_SCAN_SSD_HD  64 // Metal-specific; Head Dim the MMA kernel is specialized for (Mamba-2); use_mma gates on d_inner == this
 #define OP_SSM_SCAN_SSD_NSG 4  // Metal-specific; Number of SimdGroups per threadgroup; NSG*32 == threads dispatched per threadgroup
 
+#define GGML_METAL_TRELLIS_BATCH 32
+
 // kernel argument structs
 //
 // - element counters (e.g. ne00) typically use int32_t to reduce register usage
@@ -1448,5 +1450,33 @@ typedef struct {
 typedef struct {
     int64_t ne;
 } ggml_metal_kargs_silu_back;
+
+typedef struct {
+    int32_t  K;
+    int32_t  N;
+    int32_t  bits;
+    int32_t  first;
+    int32_t  pin;
+    int32_t  pout;
+    int32_t  batch;
+    uint64_t ne1;
+    uint64_t ne2;
+    uint64_t nb1;
+    uint64_t nb2;
+    uint64_t nb3;
+} ggml_metal_kargs_trellis;
+
+typedef struct {
+    int32_t n;
+    int32_t len;
+    int32_t run;
+    int32_t m;
+    int32_t h;
+    int32_t shards;
+    int32_t nparts;
+    int32_t inverse;
+    int32_t parts[8];
+    float   scale;
+} ggml_metal_kargs_trellis_side;
 
 #endif // GGML_METAL_IMPL
