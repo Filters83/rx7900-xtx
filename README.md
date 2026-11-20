@@ -34,7 +34,9 @@ bash run.sh 3.0   # or 2.5, 2.0
 `run.sh` downloads the binaries and model once, checks every sha256, fits the context to free GPU memory and serves a
 chat page and an OpenAI-compatible API at http://127.0.0.1:8080. Options: `--port N`, `--no-vision`, `--docker`,
 `--download-only`; arguments after `--` go to `llama-server` (`bash run.sh --help`). Files go to
-`~/.cache/nari-llama.cpp`, about 13 GB with the 3.0bpw file.
+`~/.cache/nari-llama.cpp`, about 13 GB with the 3.0bpw file. With the `hf` CLI installed (`pip install -U
+huggingface_hub`), the model files download through it, in parallel and often much faster than one curl stream, and
+are still checked against their sha256; `TRELLIS_NO_HF=1` turns this off.
 
 It needs an NVIDIA driver of 570 or newer, glibc 2.34 or newer, libstdc++ with `GLIBCXX_3.4.30` and libgomp (Ubuntu
 22.04 or newer, Debian 12 or newer). On RHEL 9, Rocky 9 or Amazon Linux 2023, use `bash run.sh 3.0 --docker`.
@@ -44,15 +46,25 @@ the full 262K context needs about 30 / 28 / 27 GB.
 
 ### Windows (experimental)
 
-Built and CPU-checked, never run on a Windows GPU. Download `run.ps1` from the
-[release](https://github.com/nari-labs/nari-llama.cpp/releases/tag/b12431-nariv0) and run it in PowerShell (driver 572
-or newer):
+The simplest path on Windows is WSL2, which runs the tested Linux build on your NVIDIA GPU (driver 572 or newer). Set
+up a distribution once from PowerShell with `wsl --install` (Ubuntu 22.04 or newer), open it, and run the Linux quick
+start there:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File run.ps1 -Budget 3.0   # or 2.5, 2.0
+```sh
+curl -fsSLO https://github.com/nari-labs/nari-llama.cpp/releases/download/b12431-nariv0/run.sh
+bash run.sh 3.0   # or 2.5, 2.0
 ```
 
-Manual setup: [README-windows.md](nariq/README-windows.md).
+Files go to `~/.cache/nari-llama.cpp` inside WSL, and the chat page and API are reachable from Windows at
+http://127.0.0.1:8080. From the next release, `run.ps1 -Wsl` does the same from PowerShell.
+
+The native Windows build is built and CPU-checked but has not been run on a Windows GPU. Its binaries are not
+code-signed yet, so Windows 11 blocks them when Smart App Control is on; use WSL2 there. To try it, download `run.ps1`
+from the [release](https://github.com/nari-labs/nari-llama.cpp/releases/tag/b12431-nariv0) and run
+`powershell -ExecutionPolicy Bypass -File run.ps1 -Budget 3.0`. Manual setup: [README-windows.md](nariq/README-windows.md).
+
+On Windows, close to 1.5 GB of GPU memory can go to the desktop, which shortens the fitted context. For example, an
+RTX 5060 Ti 16 GB in WSL2 fits about 47K tokens of context with the 2.5bpw file and the vision projector.
 
 ### Manual setup
 
@@ -86,8 +98,8 @@ docker run --rm --gpus all -p 127.0.0.1:8080:8080 -v "$PWD:/models:ro" ghcr.io/n
 | Hardware | Status |
 | --- | --- |
 | NVIDIA, compute capability 8.0+, Linux | Tested on RTX PRO 6000, H100, L4 and A10G. Native code for 8.6, 8.9, 9.0 and 12.0; other cards compile PTX on first start (about 50 s). |
-| NVIDIA, Windows | Experimental: built, never run on a Windows GPU. |
-| NVIDIA GeForce | Not tested yet. |
+| NVIDIA, Windows | Experimental. WSL2: the Linux build, run on a GeForce RTX 5060 Ti. Native build: never run on a Windows GPU, and blocked by Smart App Control when it is on (not code-signed yet). |
+| NVIDIA GeForce | One card run so far, not qualified: RTX 5060 Ti 16 GB (Windows 11, WSL2), 2.5bpw, about 33 tokens/s decode on a short prompt. |
 | NVIDIA, Linux ARM64 (GH200, DGX Spark) | No release binaries; build from source, untested. |
 | Apple Silicon | Experimental, build from source, about 3.8 (3.0bpw) to 4.9 (2.0bpw) tokens/s on an M3 Pro ([Metal notes](nariq/README-metal.md)). |
 | CPU | Every coded operation runs on the CPU, slowly for a 27B model. |

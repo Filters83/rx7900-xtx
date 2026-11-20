@@ -12,7 +12,8 @@
 # Files go to ~/.cache/nari-llama.cpp (about 13 GB with the 3.0 file); delete that folder to remove them.
 # Environment: TRELLIS_HOME (another download folder); TRELLIS_RELEASE_URL, TRELLIS_MODEL_URL, TRELLIS_IMAGE and
 # TRELLIS_TAG (mirrors and tests); HF_TOKEN (sent to https://huggingface.co only, for gated or private model
-# repositories). Needs curl, tar, sha256sum, an NVIDIA driver of 570 or newer, glibc 2.34 or newer, libstdc++ with
+# repositories); TRELLIS_NO_HF=1 (download the model files with curl even when the hf CLI is installed; hf is
+# faster). Needs curl, tar, sha256sum, an NVIDIA driver of 570 or newer, glibc 2.34 or newer, libstdc++ with
 # GLIBCXX_3.4.30 and libgomp (Ubuntu 22.04 or newer, Debian 12 or newer; on RHEL 9 or Amazon Linux 2023 use --docker).
 # Without a GPU it runs on the CPU, slowly.
 set -euo pipefail
@@ -102,21 +103,39 @@ fetch() {  # url, path, sha256[, size]: download once (resuming a partial file),
     if [ -n "$size" ] && [ "$have" -gt "$size" ]; then rm -f "$path.part"; have=0; fi
     if [ -z "$size" ] || [ "$have" -lt "$size" ]; then
         echo "downloading $(basename "$path")"
-        if ! curl -fL -# --retry 5 --retry-delay 3 -C - -H @<(hf_auth "$url") -o "$path.part" "$url"; then
+        local attempt code
+        for attempt in 1 2 3 4 5; do
+            # a transfer slower than 100 KB/s for 60 s fails, so a stalled connection is resumed on a new one
+            code="$(curl -fL -# --retry 5 --retry-delay 3 --speed-limit 102400 --speed-time 60 -C - \
+                -H @<(hf_auth "$url") -o "$path.part" -w '%{http_code}' "$url")" && break
             # resuming a part that is already complete fails (HTTP 416): keep it if it checks out
-            if [ ! -f "$path.part" ] || [ "$(sha256sum "$path.part" | cut -d' ' -f1)" != "$sha" ]; then
+            if [ -f "$path.part" ] && { [ -z "$size" ] || [ "$(stat -c %s "$path.part")" = "$size" ]; } &&
+                    [ "$(sha256sum "$path.part" | cut -d' ' -f1)" = "$sha" ]; then
+                break
+            fi
+            case "$code" in
+                401|403) echo "run.sh: $url refused access (HTTP $code); the repository may be private or gated." \
+                              "Set HF_TOKEN to a token that can read it" >&2; exit 1 ;;
+                404) echo "run.sh: $url was not found (HTTP 404)" >&2; exit 1 ;;
+            esac
+            if [ "$attempt" = 5 ]; then
                 echo "run.sh: could not download $(basename "$path") (see the curl error above); run again to resume" >&2
                 exit 1
             fi
-        fi
+            echo "run.sh: the download of $(basename "$path") stopped; resuming" >&2
+        done
     fi
     echo "checking $(basename "$path")"
-    if [ "$(sha256sum "$path.part" | cut -d' ' -f1)" != "$sha" ]; then
+    if ! verify "$path" "$sha"; then
         rm -f "$path.part"
         echo "run.sh: $(basename "$path") does not match its sha256; deleted, run again to download it again" >&2
         exit 1
     fi
-    mv "$path.part" "$path" && touch "$path.ok"
+}
+
+verify() {  # path, sha256: when path.part matches, move it to path and mark it checked
+    [ "$(sha256sum "$1.part" | cut -d' ' -f1)" = "$2" ] || return 1
+    mv "$1.part" "$1" && touch "$1.ok"
 }
 
 # free space for what is still to download (the binaries: about 0.9 GB of archives, kept, and 1.2 GB extracted)
@@ -133,9 +152,33 @@ if [ -n "$free" ] && [ "$need" -gt "$free" ]; then
 fi
 echo "files: $HOME_DIR"
 
+hf_fetch() {  # file, sha256: download a Hugging Face file with the hf CLI and check it; on any failure curl takes over
+    # hf downloads in parallel, often much faster than one curl stream
+    [ -z "${TRELLIS_NO_HF:-}" ] && command -v hf > /dev/null || return 0
+    [[ "$MODEL_URL" =~ ^https://(huggingface\.co|hf\.co)/([^/]+/[^/]+)/resolve/([^/]+)$ ]] || return 0
+    local file="$1" models="$HOME_DIR/models"
+    [ -f "$models/$file.ok" ] && return 0
+    echo "downloading $file with hf"
+    if hf download "${BASH_REMATCH[2]}" "$file" --revision "${BASH_REMATCH[3]}" --local-dir "$models/.hf" > /dev/null &&
+            [ -f "$models/.hf/$file" ]; then
+        mv -f "$models/.hf/$file" "$models/$file.part"
+        echo "checking $file"
+        verify "$models/$file" "$2" && return 0
+        rm -f "$models/$file.part"
+        echo "run.sh: $file from hf does not match its sha256; using curl" >&2
+    else
+        echo "run.sh: hf could not download $file; using curl" >&2
+    fi
+}
+
 fetch_models() {
+    hf_fetch "${FILE[$budget]}" "${SHA[$budget]}"
     fetch "$MODEL_URL/${FILE[$budget]}" "$HOME_DIR/models/${FILE[$budget]}" "${SHA[$budget]}" "${SIZE[$budget]}"
-    [ "$vision" = 0 ] || fetch "$MODEL_URL/$MMPROJ" "$HOME_DIR/models/$MMPROJ" "$MMPROJ_SHA" "$MMPROJ_SIZE"
+    if [ "$vision" = 1 ]; then
+        hf_fetch "$MMPROJ" "$MMPROJ_SHA"
+        fetch "$MODEL_URL/$MMPROJ" "$HOME_DIR/models/$MMPROJ" "$MMPROJ_SHA" "$MMPROJ_SIZE"
+    fi
+    rm -rf "$HOME_DIR/models/.hf"
 }
 
 # llama.cpp starts a thread per core of the whole machine, even where this process may use fewer CPUs (a cpuset or a

@@ -56,7 +56,8 @@ Decode on one RTX PRO 6000, one session, 4K / 64K input tokens: 88.9 / 70.7 (3.0
 Linux needs an NVIDIA driver of 570 or newer, glibc 2.34 or newer, libstdc++ with `GLIBCXX_3.4.30` and libgomp
 (Ubuntu 22.04, Debian 12); on RHEL 9 or Amazon Linux 2023 use `bash run.sh 3.0 --docker`.
 <!-- windows -->
-Windows needs driver 572 or newer.
+Windows needs driver 572 or newer. The Windows binaries are not code-signed, so Smart App Control blocks them when it is
+on; there, `run.ps1 -Wsl` runs the Linux build in WSL2.
 <!-- /windows -->
 No GeForce card has been tested yet. GPUs below compute capability 8.0, and AMD and Intel GPUs, run on the CPU.
 

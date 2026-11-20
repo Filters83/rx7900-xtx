@@ -278,6 +278,9 @@ class ReleaseTests(unittest.TestCase):
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                     return
+                if self.path.startswith("/denied/"):  # a private or gated repository without a token
+                    self.send_error(401)
+                    return
                 super().do_GET()
 
             def log_message(self, *_):
@@ -360,6 +363,46 @@ class ReleaseTests(unittest.TestCase):
         result = command("bash", str(launcher), "3.0", "--no-vision", "--download-only", env=self.env)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([h.get("Authorization") for p, h in hub_seen], [None])
+
+    def test_download_errors_name_the_http_status(self):
+        web = self.root / "web"
+        launcher, _ = self.fixture_launcher(web, [])
+        server, _ = self.serve(web)
+        url = f"http://127.0.0.1:{server.server_port}"
+        self.env.update(TRELLIS_RELEASE_URL=url, TRELLIS_MODEL_URL=f"{url}/denied")
+        denied = command("bash", str(launcher), "3.0", "--no-vision", "--download-only", env=self.env)
+        self.assertEqual(denied.returncode, 1)
+        self.assertIn("HTTP 401", denied.stderr)
+        self.assertIn("HF_TOKEN", denied.stderr)
+        self.env["TRELLIS_MODEL_URL"] = url
+        missing = command("bash", str(launcher), "3.0", "--no-vision", "--download-only", env=self.env)
+        self.assertEqual(missing.returncode, 1)
+        self.assertIn("HTTP 404", missing.stderr)
+        self.assertNotIn("resuming", missing.stderr)
+
+    def test_hf_cli_downloads_the_model_files_when_installed(self):
+        web = self.root / "web"
+        names = ["Qwen3.8-27B-NariQ-3.0bpw.gguf", "Qwen3.8-27B-NariQ-mmproj-BF16.gguf"]
+        launcher, model = self.fixture_launcher(web, names)
+        server, seen = self.serve(web)
+        calls = self.root / "hf-calls"
+        # a stand-in hf that copies the file from the fixture folder: hf download REPO FILE --revision R --local-dir D
+        (self.root / "mock" / "hf").write_text(
+            '#!/bin/sh\nprintf "%s " "$@" >> "$HF_CALLS"; echo >> "$HF_CALLS"\n'
+            'mkdir -p "$7" && cp "$HF_WEB/$3" "$7/$3"\n')
+        (self.root / "mock" / "hf").chmod(0o755)
+        self.env.update(TRELLIS_RELEASE_URL=f"http://127.0.0.1:{server.server_port}", HF_CALLS=str(calls),
+                        HF_WEB=str(web), TRELLIS_MODEL_URL="https://huggingface.co/org/repo/resolve/main")
+        result = command("bash", str(launcher), "3.0", "--download-only", env=self.env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        models = self.root / "cache/models"
+        self.assertEqual(calls.read_text().splitlines(),
+                         [f"download org/repo {n} --revision main --local-dir {models}/.hf " for n in names])
+        for name in names:
+            self.assertEqual((models / name).read_bytes(), model)
+            self.assertTrue((models / f"{name}.ok").exists())
+        self.assertFalse((models / ".hf").exists())
+        self.assertFalse([p for p, _ in seen if p.endswith(".gguf")])  # curl never fetched a model file
 
 
 class CrossPlatformTests(unittest.TestCase):
