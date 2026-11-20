@@ -33,7 +33,7 @@ class ReleaseTests(unittest.TestCase):
         self.tag = (RELEASE / "TAG").read_text().strip()
 
     def test_invalid_arguments_do_not_download(self):
-        for args in [("--bogus",), ("1.5",), ("--port",), ("--host",)]:
+        for args in [("--bogus",), ("1.5",), ("--port",), ("--host",), ("--port=abc",), ("--port", "80a")]:
             result = command("bash", str(RELEASE / "run.sh"), *args, env=self.env)
             self.assertEqual(result.returncode, 2, result.stderr)
         self.assertFalse((self.root / "cache").exists())
@@ -221,6 +221,15 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn("--alias\ntest model\n", result.stdout)
         self.assertEqual(result.stdout.splitlines().count("-t"), 1)
         self.assertEqual((self.root / "cache/models/Qwen3.8-27B-NariQ-3.0bpw.gguf").read_bytes(), model)
+        self.assertIn("--min-p\n0\n", result.stdout)
+        # a download that finished but was never checked (stopped during the sha256 check) resumes cleanly
+        models = self.root / "cache/models"
+        (models / "Qwen3.8-27B-NariQ-3.0bpw.gguf").rename(models / "Qwen3.8-27B-NariQ-3.0bpw.gguf.part")
+        (models / "Qwen3.8-27B-NariQ-3.0bpw.gguf.ok").unlink()
+        again = command("bash", str(launcher), "3", "--no-vision", "--port=9001", env=self.env)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertEqual((models / "Qwen3.8-27B-NariQ-3.0bpw.gguf").read_bytes(), model)
+        self.assertIn("--port\n9001\n", again.stdout)
         shutil.rmtree(self.root / "cache")
         (web / "Qwen3.8-27B-NariQ-3.0bpw.gguf").write_bytes(b"corrupt")
         bad = command("bash", str(launcher), "--no-vision", env=self.env)
@@ -303,7 +312,7 @@ class ReleaseTests(unittest.TestCase):
         home = self.root / "cache"
         self.assertEqual(calls.read_text().splitlines()[0].split("\0")[:-1], [
             "run", "--rm", "--gpus", "all", "-p", "127.0.0.1:9000:8080", "-v", f"{home}/models:/models:ro", image,
-            "-m", "/models/Qwen3.8-27B-NariQ-3.0bpw.gguf",
+            "-m", "/models/Qwen3.8-27B-NariQ-3.0bpw.gguf", "--min-p", "0",
             "--mmproj", "/models/Qwen3.8-27B-NariQ-mmproj-BF16.gguf", "--fit-target", "2560",
             "--host", "0.0.0.0", "--port", "8080", "-t", "2", "--alias", "test model"])
         for name in names:
