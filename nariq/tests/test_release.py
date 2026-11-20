@@ -370,6 +370,12 @@ class CrossPlatformTests(unittest.TestCase):
         self.assertIn(tag, sh)
         self.assertIn(tag, ps)
 
+    def test_mac_launcher_pins_the_same_model_weights(self):
+        linux = (RELEASE / "run.sh").read_text()
+        mac = (RELEASE / "run-mac.sh").read_text()
+        projector = re.search(r"^MMPROJ_SHA=([a-f0-9]{64})$", linux, re.MULTILINE)[1]
+        self.assertEqual(set(re.findall(r"[a-f0-9]{64}", mac)), set(re.findall(r"[a-f0-9]{64}", linux)) - {projector})
+
 
 if __name__ == "__main__":
     unittest.main()

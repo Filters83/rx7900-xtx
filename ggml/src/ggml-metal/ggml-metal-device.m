@@ -1568,8 +1568,8 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
         }
     }
 
-    // the trellis types have no generic kernels: only the trellis ops read them
-    if (op->op != GGML_OP_TRELLIS && op->op != GGML_OP_TRELLIS_GET_ROWS) {
+    // the scheduler checks weight leaves with GGML_OP_NONE; only trellis kernels read them
+    if (op->op != GGML_OP_NONE && op->op != GGML_OP_TRELLIS && op->op != GGML_OP_TRELLIS_GET_ROWS) {
         if (ggml_is_trellis_type(op->type)) {
             return false;
         }

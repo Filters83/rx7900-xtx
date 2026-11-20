@@ -100,6 +100,8 @@ now. Coded embedding lookups run on the CPU. LoRA adapters on NariQ weights are 
 
 Needs CMake 3.18 or newer, a C++17 compiler and, for CUDA, the CUDA toolkit (the releases use 12.8).
 
+On Apple Silicon, run `bash nariq/run-mac.sh 2.0` from the checkout to verify the weights, build the Metal server and start local chat. See the [Mac quick start](nariq/README-metal.md) for prerequisites and options.
+
 ```sh
 git clone --branch b12431-nariv0 https://github.com/nari-labs/nari-llama.cpp && cd nari-llama.cpp
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON    # or -DGGML_CUDA=OFF for CPU only

@@ -9,6 +9,9 @@ on:
         description: Run correctness tests on a self-hosted Apple Silicon Metal runner
         type: boolean
         default: false
+      metal_model:
+        description: Optional local path to the released 2.0bpw GGUF on the Metal runner
+        type: string
 permissions:
   contents: read
 concurrency:
@@ -81,3 +84,19 @@ jobs:
         env:
           MTL_SHADER_VALIDATION: '1'
           GGML_METAL_SHARED_BUFFERS_DISABLE: '1'
+      - name: Load and decode the released NariQ model on Metal
+        if: inputs.metal_model != ''
+        env:
+          NARIQ_METAL_MODEL: ${{ inputs.metal_model }}
+        shell: bash
+        run: |
+          bash nariq/run-mac.sh 2.0 --model "$NARIQ_METAL_MODEL" --download-only
+          cmake -S . -B build -DLLAMA_BUILD_TOOLS=ON
+          cmake --build build -j 3 --target llama-bench
+          build/bin/llama-bench --device MTL0 -m "$NARIQ_METAL_MODEL" -b 32 -ub 32 \
+            -p 0 -n 0 -pg 8,8 -r 1 --fit-target 1024 --fit-ctx 2048 -v > metal-model.log 2>&1 || {
+            tail -80 metal-model.log
+            exit 1
+          }
+          grep -E 'offloaded [1-9][0-9]*/[0-9]+ layers to GPU' metal-model.log
+          grep -F 'pp8+tg8' metal-model.log
