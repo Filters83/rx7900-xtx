@@ -1,3 +1,9 @@
+> [!NOTE]
+> **nari-llama.cpp:** this fork adds only the NariQ format, loader and kernels. Open pull requests against
+> `nariq/b12431`; changes that do not touch NariQ belong upstream. Nari Labs maintainers review here. The AI usage
+> policy below applies; the sections on maintainers, code owners and labels describe upstream's process. Checks to run:
+> the [pull request template](.github/pull_request_template.md) and [nariq/README.md](nariq/README.md).
+
 # Contributors
 
 The project differentiates between 3 levels of contributors:

@@ -7,7 +7,7 @@
 > Read more: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 > [!NOTE]
-> These apply to ggml-org/llama.cpp, ignore these if you are operating in a different repository or fork.
+> These apply to ggml-org/llama.cpp and to its NariQ fork nari-labs/nari-llama.cpp (pull requests against `nariq/b12431`); ignore them in other repositories or forks.
 
 ---
 

@@ -1,6 +1,6 @@
 # nari-llama.cpp: Linux x86-64, CUDA 12.8
 
-llama.cpp with the NariQ trellis tensor types (TRL1-TRL6) that the Qwen3.8-27B trellis GGUFs use. Stock llama.cpp,
+llama.cpp with the NariQ trellis tensor types (TRL1-TRL6) that the Qwen3.8-27B NariQ GGUFs use. Stock llama.cpp,
 Ollama and LM Studio cannot load those files.
 
 - Create a destination folder, then extract this archive and the matching `cudart-nari-llama.cpp-...` archive with `tar -xzf ARCHIVE --strip-components=1 -C DESTINATION`. This places the programs and runtime libraries together.

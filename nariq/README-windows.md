@@ -6,7 +6,7 @@ Extract both the program ZIP and the matching CUDA runtime ZIP into one director
 .\llama-server.exe -m Qwen3.8-27B-NariQ-3.0bpw.gguf --mmproj Qwen3.8-27B-NariQ-mmproj-BF16.gguf --port 8080
 ```
 
-The server opens a chat page and an OpenAI-compatible API at http://127.0.0.1:8080 (without `--port`, llama-server's default is 9931). Without `-c`, context is fitted to available memory. Without a working GPU, the CPU backend runs slowly. `run.ps1` automates model downloads, checksums and setup once the matching release is available.
+The server opens a chat page and an OpenAI-compatible API at http://127.0.0.1:8080 (without `--port`, llama-server's default is 9931). Without `-c`, context is fitted to available memory. Without a working GPU, the CPU backend runs slowly. `run.ps1` on the release page automates the downloads, checksums and setup: `powershell -ExecutionPolicy Bypass -File run.ps1 -Budget 3.0`.
 
 Native compilation and CPU checks do not establish Windows GPU qualification. See the release notes for the tested hardware and known limitations.
 

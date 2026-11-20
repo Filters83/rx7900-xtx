@@ -44,8 +44,9 @@ A banded output head uses `output.bandNN.weight`, side tensors for each band, `o
 
 A banded embedding uses `token_embd.bandNN.weight`, side tensors for each band, `token_embd.vocab_gather`, and `trellis.embed_bands`. It has no unbanded `token_embd.weight`. The graph chains in-place band lookups; each band writes only the tokens mapped to its row interval.
 
-## Converter and runtime restrictions
+## Converter and restrictions
 
 `conversion/trellis.py` consumes a checkpoint whose `quantization_config.quant_method` is `native_trellis`. Coded modules provide `trellis`, `block_scale`, `su`, `sv`, and `row_scale`; permuted layouts also provide `perm_rows` and/or `perm_cols`. The converter composes those permutations with Qwen's DeltaNet V-head order into gathers, and retains the coded bytes.
 
-These types have no ordinary per-row `to_float` conversion. Only the custom operations and K-aware host helpers understand the tile layout and side tensors. `llama-quantize` cannot directly requantize a NariQ file. LoRA adapters are currently rejected. Metal implements coded products on GPU and keeps coded embedding lookups on CPU. Vulkan and HIP do not implement these operations on GPU.
+These types have no per-row `to_float`: only the custom operations and K-aware host helpers understand the tile layout,
+so `llama-quantize` cannot requantize a NariQ file.

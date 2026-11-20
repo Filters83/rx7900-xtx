@@ -1,8 +1,8 @@
 # Metal (experimental)
 
-This fork runs NariQ coded linear layers (`GGML_OP_TRELLIS`) on Apple GPUs. TRL1-TRL6 weights stay compressed: the GPU applies the input gathers and scales, block or whole-slice Hadamard transforms, the coded products, the inverse output transforms and the output gathers, for token decode and batched prefill, including banded output heads. Coded embedding lookups (`GGML_OP_TRELLIS_GET_ROWS`) run on the CPU backend; the scheduler moves activations between the two.
-
-There is no macOS package or launcher. Build from source.
+NariQ coded linear layers (`GGML_OP_TRELLIS`) run on Apple GPUs with the weights kept compressed, for decode and
+prefill, including banded output heads. Coded embedding lookups run on the CPU. There is no macOS package; build from
+source.
 
 ## Build and run
 
@@ -25,9 +25,9 @@ MTL_SHADER_VALIDATION=1 ./build-metal/bin/test-trellis MTL0
 GGML_METAL_SHARED_BUFFERS_DISABLE=1 ./build-metal/bin/test-trellis MTL0
 ```
 
-`test-trellis MTL0` uploads coded weights, side tensors and activations to Metal, runs the graphs and compares the results with independently decoded CPU products (tolerance `2e-4 * (1 + |reference|)`). It covers all six bit widths, identity, block and whole-slice transforms, fused output parts and shards, permutations, non-contiguous and four-dimensional inputs, several token counts, and mixed CPU/Metal graphs with CPU embeddings feeding Metal output heads. A requested Metal device that is missing fails the test.
-
-The `NariQ CPU and Metal checks` workflow compiles the Metal shaders on GitHub's hosted macOS runners and runs the CPU reference there. Hosted runners have no usable Metal GPU, so that job is a build check, not GPU evidence.
+`test-trellis MTL0` compares Metal results with independently decoded CPU products (tolerance
+`2e-4 * (1 + |reference|)`) across all bit widths, transforms, permutations, input shapes and mixed CPU/Metal graphs.
+CI compiles the shaders on hosted macOS runners, which have no usable GPU: a build check only.
 
 ## Tested configuration and limits
 
@@ -35,7 +35,6 @@ Only one machine has run this: an M3 Pro with 18 GB of unified memory, macOS 14.
 
 - The device test above passes, with shader validation and with private buffers.
 - For all three budgets, short full-model captures on CPU and Metal agree: identical greedy choices at every captured position, maximum full-vocabulary KL below 1e-8.
-- Decode runs at about 4-5 tokens/s and prompt processing at about 27 tokens/s. The M3 Pro's 150 GB/s memory bandwidth caps decode near 20-25 tokens/s for these files. Kernel redesigns tried so far (register matrix products, split-K, on-chip codebooks) were slower.
+- Decode runs at about 3.8 (3.0bpw) to 4.9 (2.0bpw) tokens/s (prompt about 27 tokens/s), well below the 15-22
+  tokens/s that the M3 Pro's 150 GB/s memory bandwidth allows for these files; too slow for long agent sessions.
 - Not qualified: vision, long context, concurrent requests and other Macs.
-
-This speed is too slow for long coding-agent sessions: a two-task DeepSWE subset run on the M3 Pro with the 2.0bpw file timed out on both tasks.

@@ -1,12 +1,28 @@
 # nari-llama.cpp
 
 The Nari Labs fork of [llama.cpp](https://github.com/ggml-org/llama.cpp) that runs the NariQ trellis-coded
-[Qwen3.8-27B GGUFs](https://huggingface.co/nari-labs/Qwen3.8-27B-NariQ-GGUF) (3.0, 2.5 and 2.0 bits per weight). It adds
-the TRL1-TRL6 tensor types, the model loader, checkpoint conversion, CPU operations, CUDA kernels (vendored libtrellis)
-and experimental Metal kernels. Stock llama.cpp, Ollama and LM Studio cannot load these files.
+[Qwen3.8-27B GGUFs](https://huggingface.co/nari-labs/Qwen3.8-27B-NariQ-GGUF) at 3.0, 2.5 and 2.0 bits per weight.
+Stock llama.cpp, Ollama and LM Studio cannot load these files yet. Based on upstream b12431 (`a946eb5`).
 
-This branch is based on upstream b12431 (`a946eb5`). The current release is
-[`b12431-nariv0`](https://github.com/nari-labs/nari-llama.cpp/releases/tag/b12431-nariv0).
+(Nov 20, 2026) First release, [`b12431-nariv0`](https://github.com/nari-labs/nari-llama.cpp/releases/tag/b12431-nariv0):
+NariQ v1 GGUFs of Qwen3.8-27B at 3.0, 2.5 and 2.0 bits per weight.
+
+## Performance
+
+| Qwen3.8-27B | Size | DeepSWE solved | DeepSWE score | Terminal-Bench 2.1 | AIME 25+26 | RealWorldQA | MGSM |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| BF16 | 53.8 GB | 44 | 83.0 | 62.6 | 97.7 | 82.4 | 94.0 |
+| NariQ 3.0bpw | 10.1 GB | 47 | 84.9 | 63.8 | 98.3 | 82.4 | 93.1 |
+| NariQ 2.5bpw | 8.4 GB | 46 | 84.5 | 60.2 | 96.5 | 81.3 | 91.8 |
+| NariQ 2.0bpw | 6.8 GB | 33 | 75.7 | 52.4 | 86.0 | 80.9 | 90.6 |
+
+DeepSWE v1.1: tasks fully solved of 113, and the mean share of each task's new tests that pass (%), one attempt per
+task. Terminal-Bench 2.1: mean test reward over 82 tasks × 3 attempts (%). Both use Claude Code driving the model.
+AIME, RealWorldQA and MGSM: % correct. Details are in the [technical report](https://arxiv.org/abs/2611.26157) and on the
+[model card](https://huggingface.co/nari-labs/Qwen3.8-27B-NariQ-GGUF).
+
+Decode on one RTX PRO 6000, one session, at 4K / 64K tokens of context: 88.9 / 70.7 (3.0bpw), 99.2 / 77.5 (2.5bpw) and
+111.7 / 85.0 (2.0bpw) tokens/s.
 
 ## Quick start (Linux x86-64, NVIDIA GPU)
 
@@ -15,84 +31,106 @@ curl -fsSLO https://github.com/nari-labs/nari-llama.cpp/releases/download/b12431
 bash run.sh 3.0   # or 2.5, 2.0
 ```
 
-`run.sh` downloads the release's binaries and the model files, checks their sha256, fits the context to free GPU memory
-and serves a chat page and an OpenAI-compatible API at http://127.0.0.1:8080. `bash run.sh --help` lists its options.
-It needs an NVIDIA driver of 570 or newer, glibc 2.34 or newer and libstdc++ with `GLIBCXX_3.4.30` (updated Ubuntu
-22.04 or Debian 12).
+`run.sh` downloads the binaries and model once, checks every sha256, fits the context to free GPU memory and serves a
+chat page and an OpenAI-compatible API at http://127.0.0.1:8080. Options: `--port N`, `--no-vision`, `--docker`,
+`--download-only`; arguments after `--` go to `llama-server` (`bash run.sh --help`). Files go to
+`~/.cache/nari-llama.cpp`, about 13 GB with the 3.0bpw file.
 
-## Prebuilt binaries
+It needs an NVIDIA driver of 570 or newer, glibc 2.34 or newer, libstdc++ with `GLIBCXX_3.4.30` and libgomp (Ubuntu
+22.04 or newer, Debian 12 or newer). On RHEL 9, Rocky 9 or Amazon Linux 2023, use `bash run.sh 3.0 --docker`.
 
-The [release page](https://github.com/nari-labs/nari-llama.cpp/releases/tag/b12431-nariv0) has the Linux x86-64 CUDA 12.8
-archives (programs and CUDA runtime), `run.sh` and a `SHA256SUMS` over all assets. Extract both archives into one
-folder, then:
+A 24 GB GPU fits about 135K / 160K / 184K tokens of context with the 3.0 / 2.5 / 2.0bpw file and the vision projector;
+the full 262K context needs about 30 / 28 / 27 GB.
 
-```sh
-./llama-server -m Qwen3.8-27B-NariQ-3.0bpw.gguf --mmproj Qwen3.8-27B-NariQ-mmproj-BF16.gguf \
-    -ngl 99 -c 131072 --jinja --port 8080 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0
+### Windows (experimental)
+
+Built and CPU-checked, never run on a Windows GPU. Download `run.ps1` from the
+[release](https://github.com/nari-labs/nari-llama.cpp/releases/tag/b12431-nariv0) and run it in PowerShell (driver 572
+or newer):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File run.ps1 -Budget 3.0   # or 2.5, 2.0
 ```
 
-Pass `--port 8080` explicitly: this llama.cpp version's default port is 9931. The release also has Windows x86-64 CUDA
-archives and `run.ps1`. They are experimental: built and checked on the CPU, never run on a Windows GPU.
+Manual setup: [README-windows.md](nariq/README-windows.md).
 
-## Docker
+### Manual setup
+
+```sh
+mkdir nari-llama.cpp
+tar -xzf nari-llama.cpp-b12431-nariv0-bin-linux-cuda-12.8-x64.tar.gz --strip-components=1 -C nari-llama.cpp
+tar -xzf cudart-nari-llama.cpp-b12431-nariv0-linux-cuda-12.8-x64.tar.gz --strip-components=1 -C nari-llama.cpp
+hf download nari-labs/Qwen3.8-27B-NariQ-GGUF \
+    Qwen3.8-27B-NariQ-3.0bpw.gguf Qwen3.8-27B-NariQ-mmproj-BF16.gguf --local-dir .   # pip install -U huggingface_hub
+./nari-llama.cpp/llama-server -m Qwen3.8-27B-NariQ-3.0bpw.gguf --mmproj Qwen3.8-27B-NariQ-mmproj-BF16.gguf \
+    --fit-target 2560 --port 8080 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0
+```
+
+The archives are on the [release page](https://github.com/nari-labs/nari-llama.cpp/releases/tag/b12431-nariv0).
+Without `-c`, the context is fitted to free GPU memory (`--fit-target 2560` keeps room for the vision projector); add
+`-c N` to cap it. Keep `--port 8080`: this version otherwise listens on 9931. The sampling flags are the thinking-mode
+settings the scores used.
+
+### Docker
+
+With the NVIDIA Container Toolkit, from the folder that holds the GGUFs:
 
 ```sh
 docker run --rm --gpus all -p 127.0.0.1:8080:8080 -v "$PWD:/models:ro" ghcr.io/nari-labs/nari-llama.cpp:b12431-nariv0 \
     -m /models/Qwen3.8-27B-NariQ-3.0bpw.gguf --mmproj /models/Qwen3.8-27B-NariQ-mmproj-BF16.gguf \
-    --fit-target 2560 --host 0.0.0.0 --port 8080
+    --fit-target 2560 --min-p 0 --host 0.0.0.0 --port 8080
 ```
 
-This needs the NVIDIA Container Toolkit. `bash run.sh 3.0 --docker` does the same with the files it downloads.
-
-## Supported hardware
+## Hardware
 
 | Hardware | Status |
 | --- | --- |
-| NVIDIA, compute capability 8.0 or newer, Linux | Tested on RTX PRO 6000, H100, L4 and A10 with all three files; B200, A100 and L40S ran an earlier build. Native code for 8.6, 8.9, 9.0 and 12.0; other cards compile PTX on the first start (about 50 s). |
+| NVIDIA, compute capability 8.0+, Linux | Tested on RTX PRO 6000, H100, L4 and A10G. Native code for 8.6, 8.9, 9.0 and 12.0; other cards compile PTX on first start (about 50 s). |
+| NVIDIA, Windows | Experimental: built, never run on a Windows GPU. |
 | NVIDIA GeForce | Not tested yet. |
-| NVIDIA, Windows | Experimental; GPU execution untested. |
-| Apple Silicon (Metal) | Experimental, build from source; only an M3 Pro has run it, at about 4-5 tokens/s. See [README-metal.md](nariq/README-metal.md). |
-| CPU | Every coded operation runs on the CPU, slowly for a 27B model; GPUs older than compute capability 8.0 fall back to it. x86-64 is packaged; ARM64 has been checked on an M3 Pro only. |
-| AMD, Intel GPUs | No NariQ kernels (HIP, Vulkan, SYCL). |
+| NVIDIA, Linux ARM64 (GH200, DGX Spark) | No release binaries; build from source, untested. |
+| Apple Silicon | Experimental, build from source, about 3.8 (3.0bpw) to 4.9 (2.0bpw) tokens/s on an M3 Pro ([Metal notes](nariq/README-metal.md)). |
+| CPU | Every coded operation runs on the CPU, slowly for a 27B model. |
+| AMD, Intel GPUs | No NariQ kernels. |
 
-Coded embedding lookups run on the CPU, also with a GPU. LoRA adapters on NariQ weights are rejected. Kernel tuning has
-focused on SM120 (RTX PRO 6000); on Ampere, Ada, Hopper and Apple GPUs NariQ files are slower than comparable stock
-GGUFs for now.
+Kernel tuning has focused on the RTX PRO 6000; on other GPUs NariQ files are slower than comparable stock GGUFs for
+now. Coded embedding lookups run on the CPU. LoRA adapters on NariQ weights are rejected.
 
 ## Build from source
 
-Linux with the NVIDIA CUDA toolkit:
+Needs CMake 3.18 or newer, a C++17 compiler and, for CUDA, the CUDA toolkit (the releases use 12.8).
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON
+git clone --branch b12431-nariv0 https://github.com/nari-labs/nari-llama.cpp && cd nari-llama.cpp
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON    # or -DGGML_CUDA=OFF for CPU only
 cmake --build build -j 4
-./build/bin/llama-server -m /path/to/model.gguf --mmproj /path/to/projector.gguf --jinja --port 8080
+./build/bin/llama-server -m model.gguf --mmproj projector.gguf --port 8080
 ```
 
-CPU only:
+## Contributing
 
-```sh
-cmake -S . -B build-cpu -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=OFF -DGGML_METAL=OFF
-cmake --build build-cpu -j 4
-./build-cpu/bin/llama-server -m /path/to/model.gguf -ngl 0 --port 8080
-```
+We welcome open-source contributions that speed up NariQ inference on more hardware: faster kernels for GeForce,
+Ampere, Ada and Hopper cards, Apple Silicon, AMD and Intel GPUs, and the CPU path. Report bugs or results on your
+hardware in [Issues](https://github.com/nari-labs/nari-llama.cpp/issues), and open pull requests against
+`nariq/b12431`; a change should keep the [CUDA qualification](nariq/cuda-qualification.md) parity checks passing and
+report decode and prefill tokens/s before and after.
 
-Apple Silicon with Metal: see [README-metal.md](nariq/README-metal.md). Release packaging, the Docker image, conversion
-and the launchers: [nariq/README.md](nariq/README.md).
+## More
 
-## Guides
-
-- [Builds, packages, conversion and launchers](nariq/README.md)
-- [NariQ tensor format](nariq/FORMAT.md)
+- [Tensor format](nariq/FORMAT.md)
+- [Packaging, conversion and checks](nariq/README.md)
 - [CUDA qualification record](nariq/cuda-qualification.md)
-- [Metal (experimental)](nariq/README-metal.md)
+- [Metal](nariq/README-metal.md)
 
-## Upstream and licensing
+General llama.cpp documentation is in [docs](docs/) and [upstream](https://github.com/ggml-org/llama.cpp), which does
+not endorse this fork.
 
-General llama.cpp documentation is in [docs](docs/) and the [upstream project](https://github.com/ggml-org/llama.cpp).
-Upstream installers and distributions do not include the NariQ tensor types, and upstream llama.cpp does not endorse
-this fork.
+## Contact us
 
-The NariQ additions are under the same [MIT license](LICENSE) as llama.cpp. The vendored libtrellis keeps its own
-[Apache-2.0 license](ggml/src/ggml-cuda/libtrellis/LICENSE). The coded weight layout follows
+For technical consulting, compute sponsorships, or partnership inquiries, please contact founders@narilabs.com.
+
+## License
+
+llama.cpp and the NariQ additions are under the [MIT license](LICENSE). The vendored libtrellis keeps its
+[Apache-2.0 license](ggml/src/ggml-cuda/libtrellis/LICENSE). The coded layout follows
 [exllamav3](https://github.com/turboderp-org/exllamav3) (MIT); see [NOTICE](nariq/NOTICE).

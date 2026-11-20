@@ -1,5 +1,11 @@
 # Security Policy
 
+> [!NOTE]
+> **nari-llama.cpp:** report vulnerabilities in the NariQ additions (`nariq/`, the trellis types, loader and kernels,
+> `run.sh` / `run.ps1`, the release archives and the container image) privately at
+> https://github.com/nari-labs/nari-llama.cpp/security/advisories/new. Issues that also affect stock llama.cpp follow
+> upstream's policy below.
+
  - [**Reporting a vulnerability**](#reporting-a-vulnerability)
  - [**Requirements**](#requirements)
  - [**Covered Topics**](#covered-topics)
