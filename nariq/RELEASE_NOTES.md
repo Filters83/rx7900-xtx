@@ -46,7 +46,7 @@ Decode on one RTX PRO 6000, one session, 4K / 64K input tokens: 88.9 / 70.7 (3.0
 | --- | --- | --- |
 | Linux x86-64, NVIDIA, CUDA 12.8 | `...-bin-linux-cuda-12.8-x64.tar.gz` + `cudart-...` | Tested on RTX PRO 6000, H100, L4 and A10G |
 <!-- windows -->
-| Windows x86-64, NVIDIA, CUDA 12.8 | `...-bin-win-cuda-12.8-x64.zip` + `cudart-...` | **Experimental**: never run on a Windows GPU |
+| Windows x86-64, NVIDIA, CUDA 12.8 | `...-bin-win-cuda-12.8-x64.zip` + `cudart-...` | **Experimental**: run on one GeForce RTX 5060 Ti, not qualified |
 <!-- /windows -->
 <!-- linux-only -->
 | Windows x86-64 | none yet | Not part of this release yet |
@@ -59,7 +59,7 @@ Linux needs an NVIDIA driver of 570 or newer, glibc 2.34 or newer, libstdc++ wit
 Windows needs driver 572 or newer. The Windows binaries are not code-signed, so Smart App Control blocks them when it is
 on; there, `run.ps1 -Wsl` runs the Linux build in WSL2.
 <!-- /windows -->
-No GeForce card has been tested yet. GPUs below compute capability 8.0, and AMD and Intel GPUs, run on the CPU.
+One GeForce card has been run so far (RTX 5060 Ti 16 GB, Windows 11, native and WSL2), not qualified. GPUs below compute capability 8.0, and AMD and Intel GPUs, run on the CPU.
 
 ## Known limits
 

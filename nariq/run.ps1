@@ -110,7 +110,8 @@ function Fetch-Hf([string]$File, [string]$Sha) {
     $m = [regex]::Match($ModelUrl, '^https://(huggingface\.co|hf\.co)/([^/]+/[^/]+)/resolve/([^/]+)$')
     if (-not $m.Success) { return }
     $models = Join-Path $HomeDir "models"
-    if (Test-Path (Join-Path $models "$File.ok")) { return }
+    # a file already checked, or a partial download that Fetch resumes
+    if ((Test-Path (Join-Path $models "$File.ok")) -or (Test-Path (Join-Path $models "$File.part"))) { return }
     $staging = Join-Path $models ".hf"
     Write-Host "downloading $File with hf"
     & hf download $m.Groups[2].Value $File --revision $m.Groups[3].Value --local-dir $staging | Out-Null

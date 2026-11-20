@@ -157,7 +157,8 @@ hf_fetch() {  # file, sha256: download a Hugging Face file with the hf CLI and c
     [ -z "${TRELLIS_NO_HF:-}" ] && command -v hf > /dev/null || return 0
     [[ "$MODEL_URL" =~ ^https://(huggingface\.co|hf\.co)/([^/]+/[^/]+)/resolve/([^/]+)$ ]] || return 0
     local file="$1" models="$HOME_DIR/models"
-    [ -f "$models/$file.ok" ] && return 0
+    # a file already checked, or a partial download that fetch resumes
+    [ -f "$models/$file.ok" ] || [ -f "$models/$file.part" ] && return 0
     echo "downloading $file with hf"
     if hf download "${BASH_REMATCH[2]}" "$file" --revision "${BASH_REMATCH[3]}" --local-dir "$models/.hf" > /dev/null &&
             [ -f "$models/.hf/$file" ]; then

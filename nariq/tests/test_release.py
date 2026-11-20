@@ -403,6 +403,15 @@ class ReleaseTests(unittest.TestCase):
             self.assertTrue((models / f"{name}.ok").exists())
         self.assertFalse((models / ".hf").exists())
         self.assertFalse([p for p, _ in seen if p.endswith(".gguf")])  # curl never fetched a model file
+        # a complete download that was never checked (as one copied in by hand) is checked, not fetched again with hf
+        launcher.write_text(launcher.read_text().replace("[3.0]=10123626592", f"[3.0]={len(model)}"))
+        (models / names[0]).rename(models / f"{names[0]}.part")
+        (models / f"{names[0]}.ok").unlink()
+        calls.unlink()
+        again = command("bash", str(launcher), "3.0", "--download-only", env=self.env)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertFalse(calls.exists())
+        self.assertEqual((models / names[0]).read_bytes(), model)
 
 
 class CrossPlatformTests(unittest.TestCase):

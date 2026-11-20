@@ -46,25 +46,38 @@ the full 262K context needs about 30 / 28 / 27 GB.
 
 ### Windows (experimental)
 
-The simplest path on Windows is WSL2, which runs the tested Linux build on your NVIDIA GPU (driver 572 or newer). Set
-up a distribution once from PowerShell with `wsl --install` (Ubuntu 22.04 or newer), open it, and run the Linux quick
-start there:
+Download `run.ps1` from the [release](https://github.com/nari-labs/nari-llama.cpp/releases/tag/b12431-nariv0) and
+run it in PowerShell (NVIDIA driver 572 or newer):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File run.ps1 -Budget 3.0   # or 2.5, 2.0
+```
+
+It downloads the native Windows build and the model, checks every sha256 and serves the chat page and API at
+http://127.0.0.1:8080. Manual setup: [README-windows.md](nariq/README-windows.md).
+
+On Windows, close to 1.5 GB of GPU memory can go to the desktop, which shortens the fitted context. For example, an
+RTX 5060 Ti 16 GB fits about 47K tokens of context with the 2.5bpw file and the vision projector.
+
+The Windows binaries are not code-signed yet, so Windows 11 blocks them when Smart App Control is on. To run them, turn
+it off in Windows Security > App & browser control > Smart App Control settings (on many Windows 11 versions it cannot
+be turned back on without resetting Windows), or use the WSL2 workaround below.
+
+<details>
+<summary>Workaround: keep Smart App Control on and run the Linux build in WSL2</summary>
+
+Set up a distribution once with `wsl --install` (Ubuntu 22.04 or newer), open it, and run the Linux quick start:
 
 ```sh
 curl -fsSLO https://github.com/nari-labs/nari-llama.cpp/releases/download/b12431-nariv0/run.sh
 bash run.sh 3.0   # or 2.5, 2.0
 ```
 
-Files go to `~/.cache/nari-llama.cpp` inside WSL, and the chat page and API are reachable from Windows at
-http://127.0.0.1:8080. From the next release, `run.ps1 -Wsl` does the same from PowerShell.
+Files go to `~/.cache/nari-llama.cpp` inside WSL, and the server is reachable from Windows at http://127.0.0.1:8080.
+In one test it decoded about 10% slower than the native build. From the next release, `run.ps1 -Wsl` does this from
+PowerShell.
 
-The native Windows build is built and CPU-checked but has not been run on a Windows GPU. Its binaries are not
-code-signed yet, so Windows 11 blocks them when Smart App Control is on; use WSL2 there. To try it, download `run.ps1`
-from the [release](https://github.com/nari-labs/nari-llama.cpp/releases/tag/b12431-nariv0) and run
-`powershell -ExecutionPolicy Bypass -File run.ps1 -Budget 3.0`. Manual setup: [README-windows.md](nariq/README-windows.md).
-
-On Windows, close to 1.5 GB of GPU memory can go to the desktop, which shortens the fitted context. For example, an
-RTX 5060 Ti 16 GB in WSL2 fits about 47K tokens of context with the 2.5bpw file and the vision projector.
+</details>
 
 ### Manual setup
 
@@ -98,8 +111,8 @@ docker run --rm --gpus all -p 127.0.0.1:8080:8080 -v "$PWD:/models:ro" ghcr.io/n
 | Hardware | Status |
 | --- | --- |
 | NVIDIA, compute capability 8.0+, Linux | Tested on RTX PRO 6000, H100, L4 and A10G. Native code for 8.6, 8.9, 9.0 and 12.0; other cards compile PTX on first start (about 50 s). |
-| NVIDIA, Windows | Experimental. WSL2: the Linux build, run on a GeForce RTX 5060 Ti. Native build: never run on a Windows GPU, and blocked by Smart App Control when it is on (not code-signed yet). |
-| NVIDIA GeForce | One card run so far, not qualified: RTX 5060 Ti 16 GB (Windows 11, WSL2), 2.5bpw, about 33 tokens/s decode on a short prompt. |
+| NVIDIA, Windows | Experimental. Run on a GeForce RTX 5060 Ti (Windows 11), not qualified yet. Blocked by Smart App Control when it is on (not code-signed yet). |
+| NVIDIA GeForce | One card run so far, not qualified: RTX 5060 Ti 16 GB, 2.5bpw with the vision projector, about 38 tokens/s decode on Windows (512 tokens, short prompt). |
 | NVIDIA, Linux ARM64 (GH200, DGX Spark) | No release binaries; build from source, untested. |
 | Apple Silicon | Experimental, build from source, about 3.8 (3.0bpw) to 4.9 (2.0bpw) tokens/s on an M3 Pro ([Metal notes](nariq/README-metal.md)). |
 | CPU | Every coded operation runs on the CPU, slowly for a 27B model. |

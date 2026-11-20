@@ -10,6 +10,6 @@ The server opens a chat page and an OpenAI-compatible API at http://127.0.0.1:80
 
 These binaries are not code-signed yet. When Windows 11 Smart App Control is on, it blocks them and `llama-server.exe` exits with code -1058471934 (0xC0E90002) before printing anything. Use the Linux build in WSL2 instead: `powershell -ExecutionPolicy Bypass -File run.ps1 -Budget 3.0 -Wsl`, or run `run.sh` inside a WSL2 distribution.
 
-Native compilation and CPU checks do not establish Windows GPU qualification. See the release notes for the tested hardware and known limitations.
+This build has run on one Windows GPU so far (GeForce RTX 5060 Ti 16 GB, Windows 11, Smart App Control off: chat, images, about 38 tokens/s decode with the 2.5bpw file). That is not a full Windows GPU qualification. See the release notes for the tested hardware and known limitations.
 
 `build-info.json` records the source revision, hashes and build settings. llama.cpp and the NariQ additions are MIT (`LICENSE`); libtrellis is Apache-2.0 (`LICENSE-libtrellis`); credits, including exllamav3, are in `NOTICE-NariQ` and `LICENSE-exllamav3`.
