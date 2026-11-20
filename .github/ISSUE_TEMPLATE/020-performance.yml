@@ -1,0 +1,50 @@
+name: Speed or hardware report
+description: Share how fast the NariQ files run on your hardware, or report a slowdown.
+title: "Speed: "
+labels: ["performance"]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Reports from hardware we have not tested (GeForce cards, Windows GPUs, Apple Silicon) are especially useful.
+        `llama-bench` numbers are the easiest to compare.
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware and system
+      description: GPU model and memory, driver version, CPU, operating system.
+    validations:
+      required: true
+  - type: textarea
+    id: version
+    attributes:
+      label: Version
+      description: Output of `llama-server --version`, and how you installed it (release archive, Docker, source).
+    validations:
+      required: true
+  - type: dropdown
+    id: model
+    attributes:
+      label: Model file
+      multiple: true
+      options:
+        - 3.0bpw
+        - 2.5bpw
+        - 2.0bpw
+    validations:
+      required: true
+  - type: textarea
+    id: bench
+    attributes:
+      label: Benchmark command and output
+      description: For example `llama-bench -m Qwen3.8-27B-NariQ-3.0bpw.gguf -ngl 99 -fa 1 -p 512 -n 128 -d 0,16384`.
+      render: console
+    validations:
+      required: true
+  - type: textarea
+    id: comparison
+    attributes:
+      label: Comparison (optional)
+      description: >
+        Numbers for a stock GGUF of similar size (for example IQ3_XXS or Q2_K) on the same machine, or for an earlier
+        release, if you have them.

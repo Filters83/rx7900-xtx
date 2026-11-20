@@ -1,0 +1,30 @@
+name: Feature or kernel proposal
+description: Propose a feature, support for new hardware, or a faster kernel.
+title: "Proposal: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Faster inference on more hardware is the most welcome kind of contribution. Pull requests should keep the
+        [CUDA qualification](https://github.com/nari-labs/nari-llama.cpp/blob/nariq/b12431/nariq/cuda-qualification.md)
+        parity checks passing and report decode and prefill tokens/s before and after.
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+      description: The feature or change, and the hardware it targets.
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Why
+      description: What it enables or how much faster you expect it to be.
+    validations:
+      required: true
+  - type: textarea
+    id: plan
+    attributes:
+      label: Implementation notes (optional)
+      description: The approach, the files you expect to touch, and whether you plan to send a pull request.

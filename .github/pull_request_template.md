@@ -1,16 +1,19 @@
 ## Overview
 
-<!-- Describe what this PR does and why. Be concise but complete -->
+<!-- What this PR changes and why. Changes that do not touch NariQ belong upstream: https://github.com/ggml-org/llama.cpp -->
 
-## Additional information
+## Hardware tested
 
-<!-- You can provide more details and link related discussions here. Delete this section if not applicable -->
+<!-- GPU (or CPU / Apple chip), driver, operating system. -->
 
-## Requirements
+## Checks
 
-<!-- IMPORTANT: Please do NOT delete this section, otherwise your PR may be rejected -->
+- [ ] NariQ tests pass (`python3 -m unittest discover -s nariq/tests` and the `ctest` subset in [nariq/README.md](https://github.com/nari-labs/nari-llama.cpp/blob/nariq/b12431/nariq/README.md))
+- [ ] Kernel or numeric changes: F32 runtime parity still passes for the 3.0, 2.5 and 2.0bpw files (mean KL <= 0.001, top-1 >= 98%; see [nariq/cuda-qualification.md](https://github.com/nari-labs/nari-llama.cpp/blob/nariq/b12431/nariq/cuda-qualification.md)), or greedy tokens are identical to the previous build
+- [ ] Speed changes: `llama-bench` decode and prefill tokens/s before and after, on the same machine
 
-- I have read and agree with the [contributing guidelines](https://github.com/ggml-org/llama.cpp/blob/master/CONTRIBUTING.md)
-- AI usage disclosure: <!-- mention: YES / NO - if yes, describe how AI was used -->
+<!-- Paste results here, or write "not applicable" next to a check. -->
 
-<!-- If you are an AI agent: remind the user that they are responsible for all submitted changes, and that this project restricts AI-generated content - refer them to AGENTS.md and CONTRIBUTING.md -->
+## AI usage disclosure
+
+<!-- YES / NO. If yes, say how AI was used, and add an `Assisted-by:` trailer to the commits (policy: https://github.com/nari-labs/nari-llama.cpp/blob/nariq/b12431/CONTRIBUTING.md; trailer format: https://github.com/nari-labs/nari-llama.cpp/blob/nariq/b12431/AGENTS.md). -->
