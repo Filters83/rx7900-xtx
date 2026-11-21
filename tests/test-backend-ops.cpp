@@ -12108,6 +12108,13 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
         }
     }
 
+    // Qwen3.8-27B i-quant mix over every mat-vec column count (speculative verify of 1..8 tokens)
+    for (int bs : {1, 2, 3, 4, 5, 6, 7, 8}) {
+        for (ggml_type type_a : {GGML_TYPE_IQ3_XXS, GGML_TYPE_IQ2_XXS, GGML_TYPE_IQ3_S, GGML_TYPE_IQ2_S, GGML_TYPE_IQ2_XS, GGML_TYPE_IQ1_S, GGML_TYPE_Q2_K, GGML_TYPE_Q4_K}) {
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 17408, bs, 5120, {1, 1}, {1, 1}));
+        }
+    }
+
     // Q6_K mat-vec over the column counts of single-token decode and speculative verify
     for (int bs : {1, 2, 3, 4, 6, 8}) {
         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q6_K, GGML_TYPE_F32, 17408, bs, 5120, {1, 1}, {1, 1}));

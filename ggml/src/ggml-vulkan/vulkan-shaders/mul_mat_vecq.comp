@@ -7,6 +7,12 @@
 #define NEEDS_IQ1S_GRID_GPU
 #define KVALUES_IQ4NL_I8
 #define B_TYPE block_q8_1_x4
+#ifndef MMVQ_UNROLL4_MAX_COLS
+#define MMVQ_UNROLL4_MAX_COLS 4
+#endif
+#ifndef MMVQ_UNROLL2_MAX_COLS
+#define MMVQ_UNROLL2_MAX_COLS 6
+#endif
 
 #include "mul_mat_vec_base.glsl"
 
@@ -176,27 +182,36 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
 
     const uint b_qs_idx = tid % (32 / K_PER_ITER);
     uint col = tid * K_PER_ITER;
-    while (num_iters >= 4) {
-        // Manually partially unroll the loop
-        [[unroll]] for (uint k = 0; k < 4; ++k) {
+    // The 4x unrolled body keeps the B blocks of all four iterations live: above MMVQ_UNROLL4_MAX_COLS
+    // columns this needs 256 VGPRs plus scratch spills on the AMD proprietary compiler (6 columns, i-quants),
+    // which halves occupancy even when k is too short to reach this loop. Unroll by 2 only there.
+    if (NUM_COLS <= MMVQ_UNROLL4_MAX_COLS) {
+        while (num_iters >= 4) {
+            // Manually partially unroll the loop
+            [[unroll]] for (uint k = 0; k < 4; ++k) {
+                iter(temp, first_row, num_rows, col, b_qs_idx);
+                col += col_stride;
+            }
+
+            num_iters -= 4;
+        }
+    }
+
+    if (NUM_COLS <= MMVQ_UNROLL2_MAX_COLS) {
+        while (num_iters >= 2) {
+            // Manually partially unroll the loop
             iter(temp, first_row, num_rows, col, b_qs_idx);
             col += col_stride;
+            iter(temp, first_row, num_rows, col, b_qs_idx);
+            col += col_stride;
+            num_iters -= 2;
         }
-
-        num_iters -= 4;
     }
 
-    if (num_iters >= 2) {
-        // Manually partially unroll the loop
+    while (num_iters > 0) {
         iter(temp, first_row, num_rows, col, b_qs_idx);
         col += col_stride;
-        iter(temp, first_row, num_rows, col, b_qs_idx);
-        col += col_stride;
-        num_iters -= 2;
-    }
-
-    if (num_iters > 0) {
-        iter(temp, first_row, num_rows, col, b_qs_idx);
+        num_iters--;
     }
 
     reduce_result(temp, d_offset, first_row, num_rows, tid);
