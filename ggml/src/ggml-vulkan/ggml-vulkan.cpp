@@ -8262,7 +8262,12 @@ void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx, const
     // subgroup size of the GQA shader: 32 on AMD when the device can run it (7900 XTX, q8_0 KV: 5 tokens at 64K
     // 334 -> 303 us, 512 tokens 28 -> 33 TFLOPS), else the default. GGML_VK_FA_GQA_WAVE=N forces N
     static const uint32_t gqa_wave_env = [] { const char * e = getenv("GGML_VK_FA_GQA_WAVE"); return e ? (uint32_t) atoi(e) : 0u; }();
-    const uint32_t gqa_wave = gqa_wave_env ? gqa_wave_env : (ctx->device->vendor_id == VK_VENDOR_ID_AMD ? 32u : 0u);
+    // AMD proprietary Windows driver (RX 9070): 64-wide subgroups for head size 256 at decode / verify batches
+    // (24 heads over 4 KV heads, q4_0 KV, 4 tokens: 8K 57.6 -> 47.9 us, 32K 204 -> 171, 64K 428 -> 338; 16 tokens
+    // at 64K 3032 -> 2187), while head size 128 (DFlash2 draft: 2560 cells 14 -> 42 us) and 32-token batches
+    // (+5-8%) are slower with them
+    const bool gqa_wave64 = ctx->device->driver_id == vk::DriverId::eAmdProprietary && HSK >= 256 && HSV >= 256 && neq1 <= 16;
+    const uint32_t gqa_wave = gqa_wave_env ? gqa_wave_env : (ctx->device->vendor_id == VK_VENDOR_ID_AMD ? (gqa_wave64 ? 64u : 32u) : 0u);
     const uint32_t gqa_sgs = (gqa_wave && ctx->device->subgroup_size_control &&
                               ctx->device->subgroup_min_size <= gqa_wave && gqa_wave <= ctx->device->subgroup_max_size)
                              ? gqa_wave : ctx->device->subgroup_size;

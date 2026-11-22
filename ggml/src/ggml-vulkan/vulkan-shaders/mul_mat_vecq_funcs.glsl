@@ -731,6 +731,24 @@ vec2 get_dm(uint ib, uint iqs) {
     return FLOAT_TYPEV2(dl, dl * (delta - 1));
 }
 
+// unpack each row once for all columns (see mul_mat_vecq.comp). value = dl * q + dl * (delta - 1), and the
+// MMVQ_UNPACK_A_MIN path subtracts a_dm.y times the column sum, hence the negated offset
+#define MMVQ_UNPACK_A
+#define MMVQ_UNPACK_A_MIN
+void mmvq_unpack_a(const uint ib_a, out int32_t a_qs[8], out vec2 a_dm) {
+    const uint ib_k = ib_a / 8;
+    const uint iqs_k = (ib_a % 8) * 32;
+
+    i32vec4 qs_a0;
+    i32vec4 qs_a1;
+    repack8(ib_k, iqs_k, qs_a0, qs_a1);
+    a_qs[0] = qs_a0.x; a_qs[1] = qs_a0.y; a_qs[2] = qs_a0.z; a_qs[3] = qs_a0.w;
+    a_qs[4] = qs_a1.x; a_qs[5] = qs_a1.y; a_qs[6] = qs_a1.z; a_qs[7] = qs_a1.w;
+
+    const vec2 dm = get_dm(ib_k, iqs_k);
+    a_dm = vec2(dm.x, -dm.y);
+}
+
 FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
     int32_t q_sum = 0;
 

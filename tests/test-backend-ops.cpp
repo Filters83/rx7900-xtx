@@ -12131,7 +12131,7 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     // Qwen3.8-27B full-attention layers (24 heads over 4 KV heads, head size 256, q4_0 KV cache)
     // at decode and speculative verify batches over a growing context
     for (int64_t kv : {8192, 32768, 65536}) {
-        for (int nb : {1, 4, 6}) {
+        for (int nb : {1, 4, 6, 16, 32}) {
             test_cases.emplace_back(new test_flash_attn_ext(256, 256, 4, {6, 1}, kv, nb, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_Q4_0, GGML_TYPE_Q4_0, {0, 1, 2, 3}, true, false, 0));
         }
         // prompt batch, K/V laid out like the KV cache (cells outermost)
@@ -12140,10 +12140,23 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
         }
     }
 
+    // DFlash2 draft attention (32 heads over 8 KV heads, head size 128, q4_0 KV) at the draft block size
+    for (int64_t kv : {512, 2560, 8192}) {
+        test_cases.emplace_back(new test_flash_attn_ext(128, 128, 8, {4, 1}, kv, 4, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_Q4_0, GGML_TYPE_Q4_0, {0, 1, 2, 3}, true, false, 0));
+    }
+
     // Qwen3.8-27B i-quant mix over every mat-vec column count (speculative verify of 1..8 tokens)
     for (int bs : {1, 2, 3, 4, 5, 6, 7, 8}) {
         for (ggml_type type_a : {GGML_TYPE_IQ3_XXS, GGML_TYPE_IQ2_XXS, GGML_TYPE_IQ3_S, GGML_TYPE_IQ2_S, GGML_TYPE_IQ2_XS, GGML_TYPE_IQ1_S, GGML_TYPE_Q2_K, GGML_TYPE_Q4_K}) {
             test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 17408, bs, 5120, {1, 1}, {1, 1}));
+        }
+    }
+
+    // one 139264-row matrix (about 130-400 MB), larger than the GPU's last-level cache:
+    // bandwidth as in the model rather than cache-hot
+    for (int bs : {1, 4}) {
+        for (ggml_type type_a : {GGML_TYPE_IQ1_S, GGML_TYPE_IQ2_XXS, GGML_TYPE_IQ2_XS, GGML_TYPE_IQ2_S, GGML_TYPE_IQ3_XXS, GGML_TYPE_IQ3_S, GGML_TYPE_IQ4_XS, GGML_TYPE_Q2_K, GGML_TYPE_Q4_K}) {
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 139264, bs, 5120, {1, 1}, {1, 1}));
         }
     }
 
