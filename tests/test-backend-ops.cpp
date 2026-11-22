@@ -11897,6 +11897,17 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         }
     }
 
+    // prompt batches over a quantized KV cache laid out like llama's (dense, cells outermost): K/V go through
+    // the dequant+transpose f16 scratch copy
+    for (ggml_type kv_type : {GGML_TYPE_Q4_0, GGML_TYPE_Q8_0}) {
+        for (int64_t kv : {512, 1536}) {
+            for (int nb : {64, 200}) {
+                test_cases.emplace_back(new test_flash_attn_ext(256, 256, 4, {6, 1}, kv, nb, true, false, 0, 0, GGML_PREC_F32, kv_type, kv_type, {0, 2, 1, 3}, false, false));
+                test_cases.emplace_back(new test_flash_attn_ext(128, 128, 8, {4, 1}, kv, nb, true, false, 0, 0, GGML_PREC_F32, kv_type, kv_type, {0, 2, 1, 3}, false, false));
+            }
+        }
+    }
+
     // Qwen3.8-27B verify batches: several query tokens of a 6-head GQA group packed into one 16-row tile
     for (ggml_type kv_type : {GGML_TYPE_Q4_0, GGML_TYPE_Q8_0, GGML_TYPE_F16}) {
         for (int64_t kv : {512, 4096}) {
@@ -12122,6 +12133,10 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     for (int64_t kv : {8192, 32768, 65536}) {
         for (int nb : {1, 4, 6}) {
             test_cases.emplace_back(new test_flash_attn_ext(256, 256, 4, {6, 1}, kv, nb, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_Q4_0, GGML_TYPE_Q4_0, {0, 1, 2, 3}, true, false, 0));
+        }
+        // prompt batch, K/V laid out like the KV cache (cells outermost)
+        for (ggml_type kv_type : {GGML_TYPE_Q4_0, GGML_TYPE_Q8_0, GGML_TYPE_F16}) {
+            test_cases.emplace_back(new test_flash_attn_ext(256, 256, 4, {6, 1}, kv, 512, true, false, 0, 0, GGML_PREC_F32, kv_type, kv_type, {0, 2, 1, 3}, true, false, 0));
         }
     }
 
