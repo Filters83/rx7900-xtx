@@ -11,7 +11,7 @@
 #define MMVQ_UNROLL4_MAX_COLS 4
 #endif
 #ifndef MMVQ_UNROLL2_MAX_COLS
-#define MMVQ_UNROLL2_MAX_COLS 6
+#define MMVQ_UNROLL2_MAX_COLS 3
 #endif
 
 #include "mul_mat_vec_base.glsl"

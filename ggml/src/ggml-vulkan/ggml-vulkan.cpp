@@ -729,9 +729,15 @@ static void ggml_vk_create_pipeline_func(vk_device& device, vk_pipeline& pipelin
         pipeline_shader_create_info.setPNext(&pipeline_shader_stage_required_subgroup_size_create_info);
     }
 
+    // GGML_VK_PIPELINE_ISA=<name filter>: also capture the driver's internal representations (ISA) of the matching
+    // pipelines and write them to isa-<pipeline name>-<n>.txt in the working directory
+    static const char * pipeline_isa_filter = getenv("GGML_VK_PIPELINE_ISA");
+    const bool capture_isa = device->pipeline_executable_properties_support && pipeline_isa_filter != nullptr &&
+                             pipeline->name.find(pipeline_isa_filter) != std::string::npos;
     vk::ComputePipelineCreateInfo compute_pipeline_create_info(
         device->pipeline_executable_properties_support ?
-            vk::PipelineCreateFlagBits::eCaptureStatisticsKHR :
+            (capture_isa ? vk::PipelineCreateFlagBits::eCaptureStatisticsKHR | vk::PipelineCreateFlagBits::eCaptureInternalRepresentationsKHR
+                         : vk::PipelineCreateFlags(vk::PipelineCreateFlagBits::eCaptureStatisticsKHR)) :
             vk::PipelineCreateFlags{},
         pipeline_shader_create_info,
         pipeline->layout);
@@ -790,6 +796,34 @@ static void ggml_vk_create_pipeline_func(vk_device& device, vk_pipeline& pipelin
         executableInfo.pipeline = pipeline->pipeline;
 
         auto statistics = device->device.getPipelineExecutableStatisticsKHR(executableInfo);
+
+        if (capture_isa) {
+            static std::atomic<int> isa_count{0};
+            VkPipelineExecutableInfoKHR info = executableInfo;
+            uint32_t n = 0;
+            VULKAN_HPP_DEFAULT_DISPATCHER.vkGetPipelineExecutableInternalRepresentationsKHR(device->device, &info, &n, nullptr);
+            std::vector<VkPipelineExecutableInternalRepresentationKHR> reps(n, { VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INTERNAL_REPRESENTATION_KHR });
+            VULKAN_HPP_DEFAULT_DISPATCHER.vkGetPipelineExecutableInternalRepresentationsKHR(device->device, &info, &n, reps.data());
+            std::vector<std::vector<char>> bufs(n);
+            for (uint32_t r = 0; r < n; r++) {
+                bufs[r].resize(reps[r].dataSize + 1, 0);
+                reps[r].pData = bufs[r].data();
+            }
+            VULKAN_HPP_DEFAULT_DISPATCHER.vkGetPipelineExecutableInternalRepresentationsKHR(device->device, &info, &n, reps.data());
+            const std::string fname = "isa-" + pipeline->name + "-" + std::to_string(isa_count++) + ".txt";
+            FILE * f = fopen(fname.c_str(), "wb");
+            if (f) {
+                for (uint32_t r = 0; r < n; r++) {
+                    fprintf(f, "==== %s: %s\n", reps[r].name, reps[r].description);
+                    if (reps[r].isText) {
+                        fputs(bufs[r].data(), f);
+                    }
+                    fputs("\n", f);
+                }
+                fclose(f);
+                std::cerr << "ggml_vulkan: ISA of " << pipeline->name << " written to " << fname << std::endl;
+            }
+        }
 
         bool print_stats = !vk_pipeline_stats_filter.empty() &&
                            pipeline->name.find(vk_pipeline_stats_filter) != std::string::npos;
