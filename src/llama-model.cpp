@@ -1584,8 +1584,19 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
     };
 
     // assign the input layer
-    // there is very little benefit to offloading the input layer, so always keep it on the CPU
+    // Keep ordinary embeddings on the host. Full Vulkan offload also moves coded embeddings.
     pimpl->dev_input = { cpu_dev, &pimpl->cpu_buft_list };
+    if (act_gpu_layers == n_layer_all + 1) {
+        const auto * embedding = ml.get_tensor_meta("token_embd.weight");
+        const auto * first_band = ml.get_tensor_meta("token_embd.band00.weight");
+        if ((embedding && ggml_is_trellis_type(embedding->type)) || (first_band && ggml_is_trellis_type(first_band->type))) {
+            const auto layer = get_layer_buft_list(0);
+            const auto reg = ggml_backend_dev_backend_reg(layer.dev);
+            if (reg && strcmp(ggml_backend_reg_name(reg), "Vulkan") == 0) {
+                pimpl->dev_input = layer;
+            }
+        }
+    }
 
     // assign the repeating layers to the devices according to the splits
     pimpl->dev_layer.resize(n_layer_all);

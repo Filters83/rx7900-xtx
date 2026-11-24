@@ -76,8 +76,8 @@ int main(int argc, char ** argv) {
         cp.no_perf = false;
         auto * ctx = llama_init_from_model(model, cp);
         check(ctx != nullptr, "context allocation failed");
-        auto * batch = llama_batch_ext_init(ctx);
-        check(batch != nullptr, "batch allocation failed");
+        auto batch = llama_batch_init(ubatch, 0, 1);
+        check(batch.token != nullptr, "batch allocation failed");
         std::ofstream logits(output + ".f32", std::ios::binary);
         check(bool(logits), "cannot open logits file");
         json report = {{"complete", false}, {"model", model_path}, {"prompt", prompt}, {"prompt_ids", tokens},
@@ -96,14 +96,15 @@ int main(int argc, char ** argv) {
             return int(std::max_element(row, row + nv) - row);
         };
         auto decode = [&](const llama_token * ids, int count, int pos) {
-            llama_batch_ext_clear(batch);
+            batch.n_tokens = count;
             for (int i = 0; i < count; ++i) {
-                const int index = llama_batch_ext_add_token(batch, 0, ids[i]);
-                const llama_pos p = pos + i;
-                check(index >= 0 && llama_batch_ext_set_pos(batch, index, &p), "batch position failed");
-                check(llama_batch_ext_set_output_logits(batch, index, true), "batch output failed");
+                batch.token[i] = ids[i];
+                batch.pos[i] = pos + i;
+                batch.n_seq_id[i] = 1;
+                batch.seq_id[i][0] = 0;
+                batch.logits[i] = true;
             }
-            check(llama_process(ctx, LLAMA_PROCESS_TYPE_DECODE, batch) == 0, "decode failed");
+            check(llama_decode(ctx, batch) == 0, "decode failed");
         };
         const auto prompt_start = clock_type::now();
         int top = -1;
@@ -136,7 +137,7 @@ int main(int argc, char ** argv) {
         report["text"] = text;
         logits.close();
         llama_perf_context_print(ctx);
-        llama_batch_ext_free(batch);
+        llama_batch_free(batch);
         llama_free(ctx); llama_model_free(model); llama_backend_free();
         report["complete"] = true;
         std::ofstream metadata(output + ".json");

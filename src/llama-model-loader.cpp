@@ -732,6 +732,9 @@ llama_model_loader::llama_model_loader(
             throw std::runtime_error("trellis: coded tensors require trellis.version = 1 (uint32)");
         }
     }
+    if (has_coded_tensors && gguf_find_key(metadata, "prism.hadamard.version") >= 0) {
+        throw std::runtime_error("trellis: models with Prism Hadamard-folded weights are unsupported");
+    }
 
     fver = (enum llama_fver) gguf_get_version(metadata);
 

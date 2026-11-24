@@ -289,7 +289,7 @@ int main() {
         gguf_set_val_str(f.meta, "prism.hadamard.sign_mode", "identity");
         const char * folded[] = {"output.weight"};
         gguf_set_arr_str(f.meta, "prism.hadamard.weight_names", folded, 1);
-        check_load("a Hadamard-folded coded weight must be rejected", f, "output.weight is coded and Hadamard-folded");
+        check_load("a Trellis model with Prism folding must be rejected", f, "models with Prism Hadamard-folded weights are unsupported");
     }
     {
         mtp_fixture f(false);

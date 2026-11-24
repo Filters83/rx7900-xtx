@@ -1535,6 +1535,7 @@ void llm_graph_result::set_params(const llm_graph_params & params) {
 
 llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     arch             (params.arch),
+    trellis_model    (params.trellis_model),
     hparams          (params.hparams),
     cparams          (params.cparams),
     ubatch           (params.ubatch),
@@ -1599,7 +1600,7 @@ ggml_tensor * llm_graph_context::build_trellis_bands(ggml_tensor * cur) const {
     if (ggml_nrows(cur) == 1) {
         // one token: concatenate pairwise, so each band is copied log2(n_bands) times instead of up to n_bands times
         std::vector<ggml_tensor *> level;
-        for (ggml_tensor * w : model.trellis.bands) {
+        for (ggml_tensor * w : trellis_model->trellis.bands) {
             level.push_back(build_lora_mm(w, cur));
         }
         while (level.size() > 1) {
@@ -1611,18 +1612,18 @@ ggml_tensor * llm_graph_context::build_trellis_bands(ggml_tensor * cur) const {
         }
         banded = level.front();
     } else {
-        for (ggml_tensor * w : model.trellis.bands) {
+        for (ggml_tensor * w : trellis_model->trellis.bands) {
             ggml_tensor * y = build_lora_mm(w, cur);
             banded = banded ? ggml_concat(ctx0, banded, y, 0) : y;
         }
     }
     if (banded->ne[1] == 1) {  // one token: the transposes are reshapes
         ggml_tensor * bt = ggml_reshape_2d(ctx0, banded, 1, banded->ne[0]);
-        bt = ggml_get_rows(ctx0, bt, model.trellis.vocab_gather);
+        bt = ggml_get_rows(ctx0, bt, trellis_model->trellis.vocab_gather);
         return ggml_reshape_2d(ctx0, bt, bt->ne[1], 1);
     }
     ggml_tensor * bt = ggml_cont(ctx0, ggml_transpose(ctx0, banded));  // [n_tokens, n_vocab]
-    bt = ggml_get_rows(ctx0, bt, model.trellis.vocab_gather);          // rows in vocabulary order
+    bt = ggml_get_rows(ctx0, bt, trellis_model->trellis.vocab_gather); // rows in vocabulary order
     return ggml_cont(ctx0, ggml_transpose(ctx0, bt));                  // [n_vocab, n_tokens]
 }
 
@@ -1631,7 +1632,7 @@ ggml_tensor * llm_graph_context::build_lora_mm(
           ggml_tensor * cur,
           ggml_tensor * w_s) const {
     // trellis fork: a trellis-coded weight runs as one coded linear (its rotations, scales and gathers included)
-    if (const llama_trellis_weight * tw = model.trellis_weight(w)) {
+    if (const llama_trellis_weight * tw = trellis_model ? trellis_model->trellis_weight(w) : nullptr) {
         ggml_tensor * x = ggml_is_contiguous(cur) ? cur : ggml_cont(ctx0, cur);
         ggml_tensor * res = ggml_trellis_mul_mat(ctx0, w, x, tw->s16, tw->pre, tw->post, tw->pin, tw->pout,
                                                  tw->desc.data(), (int) tw->desc.size());
@@ -2510,15 +2511,15 @@ ggml_tensor * llm_graph_context::build_inp_embd(ggml_tensor * tok_embd) const {
     {
         auto & cur = inps[0];
 
-        const llama_trellis_weight * tw = tok_embd ? model.trellis_weight(tok_embd) : nullptr;
+        const llama_trellis_weight * tw = trellis_model && tok_embd ? trellis_model->trellis_weight(tok_embd) : nullptr;
         auto get_rows = [&](ggml_tensor * ids) {
             if (tok_embd == nullptr) {
-                GGML_ASSERT(!model.trellis.embed_bands.empty() && model.trellis.embed_gather != nullptr);
+                GGML_ASSERT(trellis_model && !trellis_model->trellis.embed_bands.empty() && trellis_model->trellis.embed_gather != nullptr);
                 ggml_tensor * rows = nullptr;
                 int64_t row0 = 0;
-                for (ggml_tensor * w : model.trellis.embed_bands) {
-                    const llama_trellis_weight * bw = model.trellis_weight(w);
-                    rows = ggml_trellis_get_rows_band(ctx0, rows, w, ids, model.trellis.embed_gather, row0, bw->s16,
+                for (ggml_tensor * w : trellis_model->trellis.embed_bands) {
+                    const llama_trellis_weight * bw = trellis_model->trellis_weight(w);
+                    rows = ggml_trellis_get_rows_band(ctx0, rows, w, ids, trellis_model->trellis.embed_gather, row0, bw->s16,
                                                       bw->pre, bw->post, bw->desc.data(), (int) bw->desc.size());
                     row0 += w->ne[1];
                 }

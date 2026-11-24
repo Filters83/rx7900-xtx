@@ -828,6 +828,7 @@ struct llm_graph_params {
     llm_graph_cb cb;
 
     llm_graph_result * res;
+    const llama_model * trellis_model = nullptr;
 
     // return true if the "other" params would result in a graph with the same topology as with the current params
     //   having the same topology allows us to reuse the graph in some cases
@@ -1015,6 +1016,7 @@ struct llm_graph_qkv {
 
 struct llm_graph_context {
     const llm_arch arch;
+    const llama_model * const trellis_model;
 
     const llama_hparams & hparams;
     const llama_cparams & cparams;
