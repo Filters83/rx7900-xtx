@@ -28,15 +28,19 @@ float trellis_value(uint tile, uint row, uint col) {
 }
 
 vec4 trellis_decode4(uint tile, uint p) {
-    const uint start = ((p + 1) * BITS + TILE_BITS - 16) % TILE_BITS;
+    const uint end = (p + 1) * BITS;
+    const uint start = end >= 16 ? end - 16 : end + TILE_BITS - 16;
     const uint word = start / 32;
     const uint offset = start % 32;
     const uint hi = codes[tile + word];
-    const uint lo = codes[tile + (word + 1) % TILE_WORDS];
+    const uint lo = codes[tile + (word + 1 == TILE_WORDS ? 0 : word + 1)];
+    // Callers start on a multiple of four states. For TRL1-6 this gives a nonzero bit offset.
+    const uint window = (hi << offset) | (lo >> (32 - offset));
     vec4 values;
     [[unroll]] for (uint j = 0; j < 4; ++j) {
-        const uint bit = offset + j * BITS;
-        const uint state = bit <= 16 ? hi >> (16 - bit) : bit < 32 ? (hi << (bit - 16)) | (lo >> (48 - bit)) : lo >> (48 - bit);
+        const uint bit = j * BITS;
+        // Only the fourth TRL6 state needs the next two bits after the aligned word.
+        const uint state = bit <= 16 ? window >> (16 - min(bit, 16)) : (window << 2) | ((lo >> ((30 - offset) & 31)) & 3);
         values[j] = trellis_grid(state);
     }
     return values;

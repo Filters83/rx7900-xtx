@@ -131,6 +131,31 @@ Il pacchetto usa il loader Vulkan del driver AMD e il runtime Visual C++ x64. `d
 
 Lo script imposta AVX2, FMA e F16C esplicitamente per il Ryzen 7 5800X. La sonda automatica MSVC nella configurazione Release aveva segnalato AVX-512, seguita da un'istruzione non supportata in `test-trellis`.
 
+## Profiling degli operatori Trellis
+
+Prove locali sulla RX 9070 con lo stesso GGUF 3.0 bpw, offload Vulkan, Flash Attention, cache Q4 e prefill cooperativo. Il profiler usa `GGML_VK_PERF_LOGGER=1` e `GGML_VK_TRELLIS_PROFILE=1` con il logger concorrente disattivato. I timestamp comprendono le attese fra dispatch. I benchmark A/B qui sotto sono eseguiti con il profiler disattivato.
+
+| Fase | Tempo GPU totale | Prodotto Trellis | Rotazione d'ingresso |
+| --- | ---: | ---: | ---: |
+| Prefill 256 token | 1.790 ms | 1.594 ms (89,0%) | 118 ms (6,6%) |
+| Decode, mediana per token | 73,7 ms | 32,6 ms (44,3%) | 34,8 ms (47,2%) |
+
+Una prova ha fuso la preparazione dell'ingresso e la rotazione dei blocchi Hadamard da 128 valori. Ha superato la parità numerica. A/B con tre ripetizioni ha misurato 14,73 e 15,11 tok/s in decode. Invertendo l'ordine ha misurato 15,08 e 15,11 tok/s. Il prefill è rimasto fra 144 e 146 tok/s. Il guadagno di decode è passato da circa 2,6% a 0,2% fra i due confronti. La fusione è stata rimossa dal candidato locale.
+
+Il decoder locale allinea due parole compresse una volta per gruppo di quattro stati. Sia il prodotto vettoriale sia quello cooperativo riusano la stessa finestra allineata. Benchmark con prefill da 256 token, decode da 32 token e tre ripetizioni per misura.
+
+| Confronto | Prefill prima / dopo (tok/s) | Decode prima / dopo (tok/s) |
+| --- | ---: | ---: |
+| Prima coppia | 144,09 / 150,60 | 15,22 / 17,49 |
+| Ordine invertito | 143,91 / 150,94 | 15,19 / 17,29 |
+| Media | 144,00 / 150,77 (+4,7%) | 15,21 / 17,39 (+14,4%) |
+
+Superati 4/4 CTest e 416/416 casi Vulkan per Trellis e lookup delle righe. I 31 vettori di logits del GGUF reale coincidono bit per bit con la precedente cattura Vulkan. Il confronto col riferimento CPU dà 31/31 top-1 e KL massima 1,12×10⁻⁷.
+
+`llama-server` ha completato una richiesta con un prompt breve e 12 token generati a 17,44 tok/s, con contesto configurato a 8.192 token, cache Q4 e 65/65 layer su Vulkan.
+
+La prossima prova per il prefill predispone i due termini FP16 delle attivazioni dopo la rotazione e li riusa fra i gruppi che elaborano righe diverse. Il confronto deve conservare le soglie di parità e misurare prefill e decode a 8K e 32K oltre ai test brevi.
+
 ## Lavoro aperto
 
 - Estendere il benchmark con prompt reali da 128K in su, misure di stabilità più lunghe e un corpus di qualità più ampio.

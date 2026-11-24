@@ -16279,14 +16279,19 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
 
     vk_context compute_ctx;
     if (vk_perf_logger_enabled) {
+        const uint32_t trellis_queries = ggml_vk_trellis_profile_queries(cgraph);
+        const int32_t total_queries = cgraph->n_nodes + 1 + trellis_queries;
+        ctx->trellis_query_base = trellis_queries > 0 ? cgraph->n_nodes + 1 : 0;
+        ctx->trellis_query_stages.clear();
+        ctx->trellis_query_stages.reserve(trellis_queries);
         // allocate/resize the query pool
-        if (ctx->num_queries < cgraph->n_nodes + 1) {
+        if (ctx->num_queries < total_queries) {
             if (ctx->query_pool) {
                 ctx->device->device.destroyQueryPool(ctx->query_pool);
             }
             vk::QueryPoolCreateInfo query_create_info;
             query_create_info.queryType = vk::QueryType::eTimestamp;
-            query_create_info.queryCount = cgraph->n_nodes + 100;
+            query_create_info.queryCount = total_queries + 99;
             ctx->query_pool = ctx->device->device.createQueryPool(query_create_info);
             ctx->num_queries = query_create_info.queryCount;
             ctx->query_fusion_names.resize(ctx->num_queries);
@@ -16295,7 +16300,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
             ctx->query_node_idx.resize(ctx->num_queries);
         }
 
-        ctx->device->device.resetQueryPool(ctx->query_pool, 0, cgraph->n_nodes+1);
+        ctx->device->device.resetQueryPool(ctx->query_pool, 0, total_queries);
         std::fill(ctx->query_fusion_names.begin(), ctx->query_fusion_names.end(), nullptr);
         std::fill(ctx->query_fusion_node_count.begin(), ctx->query_fusion_node_count.end(), 0);
         std::fill(ctx->query_nodes.begin(), ctx->query_nodes.end(), nullptr);
@@ -16785,6 +16790,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
                 ctx->perf_logger->log_timing(nodes, names, uint64_t((timestamps[i] - timestamps[i-1]) * ctx->device->properties.limits.timestampPeriod));
             }
         }
+        ggml_vk_trellis_print_profile(ctx);
         ctx->perf_logger->print_timings();
     }
 

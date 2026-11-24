@@ -8,6 +8,69 @@
 static constexpr uint32_t VK_TRELLIS_BATCH = 128;
 static constexpr uint32_t VK_TRELLIS_BLOCK_LIMIT = 4096;
 
+enum vk_trellis_stage : uint8_t {
+    TRELLIS_PROFILE_START,
+    TRELLIS_PROFILE_INPUT,
+    TRELLIS_PROFILE_ROTATE_IN,
+    TRELLIS_PROFILE_PRODUCT,
+    TRELLIS_PROFILE_ROTATE_OUT,
+    TRELLIS_PROFILE_OUTPUT,
+    TRELLIS_PROFILE_ROWS,
+    TRELLIS_PROFILE_STORE_ROWS,
+    TRELLIS_PROFILE_COUNT,
+};
+
+uint32_t ggml_vk_trellis_profile_queries(const ggml_cgraph * graph) {
+    static const bool enabled = std::getenv("GGML_VK_TRELLIS_PROFILE") != nullptr;
+    if (!enabled || vk_perf_logger_concurrent) {
+        return 0;
+    }
+    uint32_t count = 0;
+    for (int i = 0; i < graph->n_nodes; ++i) {
+        const ggml_tensor * node = graph->nodes[i];
+        if (node->op == GGML_OP_TRELLIS || node->op == GGML_OP_TRELLIS_GET_ROWS) {
+            const uint32_t stages = node->op == GGML_OP_TRELLIS ? 6 : 4;
+            count += stages * CEIL_DIV(ggml_nrows(node), VK_TRELLIS_BATCH);
+        }
+    }
+    return count;
+}
+
+static void ggml_vk_trellis_stamp(ggml_backend_vk_context * ctx, vk_context & subctx, vk_trellis_stage stage) {
+    if (ctx->trellis_query_base == 0) {
+        return;
+    }
+    const uint32_t index = ctx->trellis_query_base + ctx->trellis_query_stages.size();
+    GGML_ASSERT(index < static_cast<uint32_t>(ctx->num_queries));
+    subctx->s->buffer->buf.writeTimestamp(vk::PipelineStageFlagBits::eAllCommands, ctx->query_pool, index);
+    ctx->trellis_query_stages.push_back(stage);
+}
+
+void ggml_vk_trellis_print_profile(ggml_backend_vk_context * ctx) {
+    const auto & stages = ctx->trellis_query_stages;
+    if (stages.empty()) {
+        return;
+    }
+    std::vector<uint64_t> timestamps(stages.size());
+    VK_CHECK(ctx->device->device.getQueryPoolResults(ctx->query_pool, ctx->trellis_query_base, timestamps.size(),
+                timestamps.size() * sizeof(uint64_t), timestamps.data(), sizeof(uint64_t), vk::QueryResultFlagBits::e64),
+             "get Trellis timestamp results", ctx->device);
+
+    std::array<uint64_t, TRELLIS_PROFILE_COUNT> ticks = {};
+    for (size_t i = 1; i < stages.size(); ++i) {
+        if (stages[i] != TRELLIS_PROFILE_START) {
+            ticks[stages[i]] += timestamps[i] - timestamps[i - 1];
+        }
+    }
+    const char * names[] = { "start", "input", "rotate_in", "product", "rotate_out", "output", "decode_rows", "store_rows" };
+    const double us_per_tick = ctx->device->properties.limits.timestampPeriod / 1000.0;
+    std::cerr << "Trellis GPU us:";
+    for (size_t i = 1; i < ticks.size(); ++i) {
+        std::cerr << " " << names[i] << "=" << ticks[i] * us_per_tick;
+    }
+    std::cerr << '\n';
+}
+
 size_t ggml_vk_trellis_scratch_stride(const vk_device & device, const ggml_tensor * op) {
     const bool rows = op->op == GGML_OP_TRELLIS_GET_ROWS;
     const size_t width = rows ? op->ne[0] : std::max(op->ne[0], op->src[1]->ne[0]);
@@ -125,6 +188,7 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
         vk_subbuffer b = { ctx->trellis_scratch, stride, stride };
         // Scratch is shared by unrelated graph nodes.
         ggml_vk_sync_buffers(ctx, subctx);
+        ggml_vk_trellis_stamp(ctx, subctx, TRELLIS_PROFILE_START);
         pc.k = k;
         if (rows) {
             pc.offsets[0] = 0;
@@ -142,10 +206,13 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
             ggml_pipeline_request_descriptor_sets(ctx, decode, 1);
             ggml_vk_dispatch_pipeline(ctx, subctx, decode, { w_buf, scale_buf, x_buf, pin_buf, a }, pc, { k, batch, 1 });
             ggml_vk_sync_buffers(ctx, subctx);
+            ggml_vk_trellis_stamp(ctx, subctx, TRELLIS_PROFILE_ROWS);
             ggml_vk_trellis_side(ctx, subctx, a, b, k, batch, desc + 3, nullptr, 0, true);
+            ggml_vk_trellis_stamp(ctx, subctx, TRELLIS_PROFILE_ROTATE_OUT);
             auto & store = ctx->device->pipeline_trellis_store_rows;
             ggml_pipeline_request_descriptor_sets(ctx, store, 1);
             ggml_vk_dispatch_pipeline(ctx, subctx, store, { a, x_buf, pin_buf, pre_buf, post_buf, dst_buf }, pc, { k, batch, 1 });
+            ggml_vk_trellis_stamp(ctx, subctx, TRELLIS_PROFILE_STORE_ROWS);
             continue;
         }
 
@@ -162,7 +229,9 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
         ggml_pipeline_request_descriptor_sets(ctx, input, 1);
         ggml_vk_dispatch_pipeline(ctx, subctx, input, { x_buf, pre_buf, pin_buf, a }, pc, { k, batch, 1 });
         ggml_vk_sync_buffers(ctx, subctx);
+        ggml_vk_trellis_stamp(ctx, subctx, TRELLIS_PROFILE_INPUT);
         ggml_vk_trellis_side(ctx, subctx, a, b, k, batch, desc + 3, nullptr, 0, false);
+        ggml_vk_trellis_stamp(ctx, subctx, TRELLIS_PROFILE_ROTATE_IN);
 
         static const bool coopmat_enabled = [] {
             const char * opt = std::getenv("GGML_VK_TRELLIS_COOPMAT");
@@ -175,7 +244,9 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
         ggml_vk_dispatch_pipeline(ctx, subctx, product, { w_buf, scale_buf, a, b },
                                   vk_trellis_product{ k, n, batch, offset(scales) }, { n, batch, 1 });
         ggml_vk_sync_buffers(ctx, subctx);
+        ggml_vk_trellis_stamp(ctx, subctx, TRELLIS_PROFILE_PRODUCT);
         ggml_vk_trellis_side(ctx, subctx, b, a, n, batch, desc, desc + 7, desc[6], true);
+        ggml_vk_trellis_stamp(ctx, subctx, TRELLIS_PROFILE_ROTATE_OUT);
 
         pc.k = n;
         pc.offsets[1] = offset(post);
@@ -185,5 +256,6 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
         auto & output = ctx->device->pipeline_trellis_output;
         ggml_pipeline_request_descriptor_sets(ctx, output, 1);
         ggml_vk_dispatch_pipeline(ctx, subctx, output, { b, post_buf, pout_buf, dst_buf }, pc, { n, batch, 1 });
+        ggml_vk_trellis_stamp(ctx, subctx, TRELLIS_PROFILE_OUTPUT);
     }
 }

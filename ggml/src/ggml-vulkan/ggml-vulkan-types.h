@@ -1425,6 +1425,10 @@ struct ggml_backend_vk_context {
     std::vector<int> query_node_idx;
     int32_t num_queries {};
     int32_t query_idx {};
+
+    // Extra timestamps for the stages within a Trellis operator.
+    uint32_t trellis_query_base {};
+    std::vector<uint8_t> trellis_query_stages;
 };
 
 struct ggml_backend_vk_buffer_context {
