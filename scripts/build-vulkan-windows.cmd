@@ -16,6 +16,9 @@ call "%VCVARS%" >nul || exit /b 1
 set "PATH=%VULKAN_SDK%\Bin;%PATH%"
 if not defined LLAMA_BUILD_UI set "LLAMA_BUILD_UI=OFF"
 cd /d "%~dp0.." || exit /b 1
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON -DGGML_CUDA=OFF -DGGML_HIP=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=ON -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_USE_PREBUILT_UI=OFF -DLLAMA_BUILD_UI=%LLAMA_BUILD_UI% || exit /b 2
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TRY_COMPILE_CONFIGURATION=Release ^
+    -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_AVX512=OFF -DGGML_AVX_VNNI=OFF ^
+    -DGGML_VULKAN=ON -DGGML_CUDA=OFF -DGGML_HIP=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=ON -DLLAMA_BUILD_EXAMPLES=OFF ^
+    -DLLAMA_USE_PREBUILT_UI=OFF -DLLAMA_BUILD_UI=%LLAMA_BUILD_UI% || exit /b 2
 cmake --build build --config Release --target llama-server llama-bench llama-perplexity test-backend-ops test-trellis test-trellis-metadata test-trellis-model || exit /b 3
 echo BUILD_OK
