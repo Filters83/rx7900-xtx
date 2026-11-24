@@ -1595,13 +1595,18 @@ ggml_tensor * llm_graph_context::build_cvec(
 
 // trellis fork: the logits of a coded lm_head in frequency bands: every band's coded linear, concatenated in band order,
 // then each vocabulary row picked from its band (logits[t] = banded[vocab_gather[t]])
-ggml_tensor * llm_graph_context::build_trellis_bands(ggml_tensor * cur) const {
+ggml_tensor * llm_graph_context::build_trellis_bands(ggml_tensor * cur, const llama_model * weights_model) const {
+    if (weights_model == nullptr) {
+        weights_model = trellis_model;
+    }
+    GGML_ASSERT(weights_model && !weights_model->trellis.bands.empty());
+    const auto & trellis = weights_model->trellis;
     ggml_tensor * banded = nullptr;
     if (ggml_nrows(cur) == 1) {
         // one token: concatenate pairwise, so each band is copied log2(n_bands) times instead of up to n_bands times
         std::vector<ggml_tensor *> level;
-        for (ggml_tensor * w : trellis_model->trellis.bands) {
-            level.push_back(build_lora_mm(w, cur));
+        for (ggml_tensor * w : trellis.bands) {
+            level.push_back(build_lora_mm(w, cur, nullptr, weights_model));
         }
         while (level.size() > 1) {
             size_t n = 0;
@@ -1612,27 +1617,31 @@ ggml_tensor * llm_graph_context::build_trellis_bands(ggml_tensor * cur) const {
         }
         banded = level.front();
     } else {
-        for (ggml_tensor * w : trellis_model->trellis.bands) {
-            ggml_tensor * y = build_lora_mm(w, cur);
+        for (ggml_tensor * w : trellis.bands) {
+            ggml_tensor * y = build_lora_mm(w, cur, nullptr, weights_model);
             banded = banded ? ggml_concat(ctx0, banded, y, 0) : y;
         }
     }
     if (banded->ne[1] == 1) {  // one token: the transposes are reshapes
         ggml_tensor * bt = ggml_reshape_2d(ctx0, banded, 1, banded->ne[0]);
-        bt = ggml_get_rows(ctx0, bt, trellis_model->trellis.vocab_gather);
+        bt = ggml_get_rows(ctx0, bt, trellis.vocab_gather);
         return ggml_reshape_2d(ctx0, bt, bt->ne[1], 1);
     }
     ggml_tensor * bt = ggml_cont(ctx0, ggml_transpose(ctx0, banded));  // [n_tokens, n_vocab]
-    bt = ggml_get_rows(ctx0, bt, trellis_model->trellis.vocab_gather); // rows in vocabulary order
+    bt = ggml_get_rows(ctx0, bt, trellis.vocab_gather);                // rows in vocabulary order
     return ggml_cont(ctx0, ggml_transpose(ctx0, bt));                  // [n_vocab, n_tokens]
 }
 
 ggml_tensor * llm_graph_context::build_lora_mm(
           ggml_tensor * w,
           ggml_tensor * cur,
-          ggml_tensor * w_s) const {
+          ggml_tensor * w_s,
+    const llama_model * weights_model) const {
     // trellis fork: a trellis-coded weight runs as one coded linear (its rotations, scales and gathers included)
-    if (const llama_trellis_weight * tw = trellis_model ? trellis_model->trellis_weight(w) : nullptr) {
+    if (weights_model == nullptr) {
+        weights_model = trellis_model;
+    }
+    if (const llama_trellis_weight * tw = weights_model ? weights_model->trellis_weight(w) : nullptr) {
         ggml_tensor * x = ggml_is_contiguous(cur) ? cur : ggml_cont(ctx0, cur);
         ggml_tensor * res = ggml_trellis_mul_mat(ctx0, w, x, tw->s16, tw->pre, tw->post, tw->pin, tw->pout,
                                                  tw->desc.data(), (int) tw->desc.size());
@@ -2485,6 +2494,24 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     return moe_out;
 }
 
+ggml_tensor * llm_graph_context::build_token_rows(ggml_tensor * tok_embd, ggml_tensor * ids, const llama_model * weights_model) const {
+    if (tok_embd != nullptr) {
+        const auto * tw = weights_model ? weights_model->trellis_weight(tok_embd) : nullptr;
+        return tw ? ggml_trellis_get_rows(ctx0, tok_embd, ids, tw->s16, tw->pre, tw->post, tw->desc.data(), (int) tw->desc.size())
+                  : ggml_get_rows(ctx0, tok_embd, ids);
+    }
+    GGML_ASSERT(weights_model && !weights_model->trellis.embed_bands.empty() && weights_model->trellis.embed_gather);
+    ggml_tensor * rows = nullptr;
+    int64_t row0 = 0;
+    for (ggml_tensor * w : weights_model->trellis.embed_bands) {
+        const auto * tw = weights_model->trellis_weight(w);
+        rows = ggml_trellis_get_rows_band(ctx0, rows, w, ids, weights_model->trellis.embed_gather, row0,
+                                          tw->s16, tw->pre, tw->post, tw->desc.data(), (int) tw->desc.size());
+        row0 += w->ne[1];
+    }
+    return rows;
+}
+
 // input embeddings with optional lora
 ggml_tensor * llm_graph_context::build_inp_embd(ggml_tensor * tok_embd) const {
     const int64_t n_embd_inp = hparams.n_embd_inp();
@@ -2511,25 +2538,7 @@ ggml_tensor * llm_graph_context::build_inp_embd(ggml_tensor * tok_embd) const {
     {
         auto & cur = inps[0];
 
-        const llama_trellis_weight * tw = trellis_model && tok_embd ? trellis_model->trellis_weight(tok_embd) : nullptr;
-        auto get_rows = [&](ggml_tensor * ids) {
-            if (tok_embd == nullptr) {
-                GGML_ASSERT(trellis_model && !trellis_model->trellis.embed_bands.empty() && trellis_model->trellis.embed_gather != nullptr);
-                ggml_tensor * rows = nullptr;
-                int64_t row0 = 0;
-                for (ggml_tensor * w : trellis_model->trellis.embed_bands) {
-                    const llama_trellis_weight * bw = trellis_model->trellis_weight(w);
-                    rows = ggml_trellis_get_rows_band(ctx0, rows, w, ids, trellis_model->trellis.embed_gather, row0, bw->s16,
-                                                      bw->pre, bw->post, bw->desc.data(), (int) bw->desc.size());
-                    row0 += w->ne[1];
-                }
-                return rows;
-            }
-            return tw ? ggml_trellis_get_rows(ctx0, tok_embd, ids, tw->s16, tw->pre, tw->post, tw->desc.data(),
-                                              (int) tw->desc.size())
-                      : ggml_get_rows(ctx0, tok_embd, ids);
-        };
-        cur = get_rows(inp->tokens);
+        cur = build_token_rows(tok_embd, inp->tokens, trellis_model);
 
         // apply lora for embedding tokens if needed
         for (const auto & lora : *loras) {

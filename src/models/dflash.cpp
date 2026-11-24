@@ -681,15 +681,7 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
         return;
     }
 
-    // tok_embd from the target model (shared via ctx_other)
-    auto * tok_embd = model.tok_embd;
-    if (tok_embd == nullptr) {
-        GGML_ASSERT(cparams.ctx_other != nullptr);
-        const auto * model_other = llama_get_model(cparams.ctx_other);
-
-        GGML_ASSERT(model_other->tok_embd != nullptr && "DFlash decoder requires the target model's token embeddings");
-        tok_embd = model_other->tok_embd;
-    }
+    const llama_model & embedding_model = model.tok_embd ? model : *llama_get_model(cparams.ctx_other);
 
     auto inp = std::make_unique<llm_graph_input_embd>(n_embd);
 
@@ -699,7 +691,7 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
 
     ggml_tensor * inp_tokens = inp->tokens;
 
-    ggml_tensor * inpL = ggml_get_rows(ctx0, tok_embd, inp->tokens);
+    ggml_tensor * inpL = build_token_rows(embedding_model.tok_embd, inp->tokens, &embedding_model);
     cb(inpL, "inp_noise_embd", -1);
 
     res->add_input(std::move(inp));
@@ -781,25 +773,22 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
 
     res->t_embd = cur;
 
-    // lm_head from the target model (shared via ctx_other)
-    auto * output   = model.output;
-    auto * output_s = model.output_s;
-    if (output == nullptr) {
-        GGML_ASSERT(cparams.ctx_other != nullptr);
-        const auto * model_other = llama_get_model(cparams.ctx_other);
-        GGML_ASSERT(model_other->output != nullptr && "DFlash decoder requires the target model's output projection");
-        output   = model_other->output;
-        output_s = model_other->output_s;
-    }
+    const llama_model & head_model = model.output ? model : *llama_get_model(cparams.ctx_other);
+    auto * output = head_model.output;
 
     // DFlash2 with --spec-draft-vocab N: score only token ids [0, N) through a view of the head rows. The
     // selector draws its candidates from these ids; verification keeps the full vocabulary
     const int32_t draft_n_vocab = cparams.draft_n_vocab;
-    if (model.dflash_selector_hidden && !model.d2t && draft_n_vocab > 0 && draft_n_vocab < output->ne[1]) {
+    const bool restrict_vocab = model.dflash_selector_hidden && !model.d2t && draft_n_vocab > 0;
+    const bool slice_weights = output && !ggml_is_trellis_type(output->type);
+    if (restrict_vocab && slice_weights && draft_n_vocab < output->ne[1]) {
         output = ggml_view_2d(ctx0, output, output->ne[0], draft_n_vocab, output->nb[1], 0);
     }
 
-    cur = build_lora_mm(output, cur, output_s);
+    cur = output ? build_lora_mm(output, cur, head_model.output_s, &head_model) : build_trellis_bands(cur, &head_model);
+    if (restrict_vocab && !slice_weights && draft_n_vocab < cur->ne[0]) {
+        cur = ggml_cont(ctx0, ggml_view_2d(ctx0, cur, draft_n_vocab, cur->ne[1], cur->nb[1], 0));
+    }
 
     // DFlash2 feeds these logits to the selector, so they need the target's output
     // transforms; DFlash1 and DSpark read them through the sampler instead
@@ -901,15 +890,7 @@ llama_model_dflash::graph_dsv4::graph_dsv4(const llama_model & model, const llm_
         return;
     }
 
-    // tok_embd from the target model (shared via ctx_other)
-    auto * tok_embd = model.tok_embd;
-    if (tok_embd == nullptr) {
-        GGML_ASSERT(cparams.ctx_other != nullptr);
-        const auto * model_other = llama_get_model(cparams.ctx_other);
-
-        GGML_ASSERT(model_other->tok_embd != nullptr && "DSpark decoder requires the target model's token embeddings");
-        tok_embd = model_other->tok_embd;
-    }
+    const llama_model & embedding_model = model.tok_embd ? model : *llama_get_model(cparams.ctx_other);
 
     auto inp = std::make_unique<llm_graph_input_embd>(n_embd);
 
@@ -918,7 +899,7 @@ llama_model_dflash::graph_dsv4::graph_dsv4(const llama_model & model, const llm_
 
     ggml_tensor * inp_tokens = inp->tokens;
 
-    ggml_tensor * inpL = ggml_get_rows(ctx0, tok_embd, inp->tokens);
+    ggml_tensor * inpL = build_token_rows(embedding_model.tok_embd, inp->tokens, &embedding_model);
     cb(inpL, "inp_noise_embd", -1);
 
     res->add_input(std::move(inp));
@@ -997,18 +978,9 @@ llama_model_dflash::graph_dsv4::graph_dsv4(const llama_model & model, const llm_
     cur = build_norm(cur, model.output_norm, nullptr, LLM_NORM_RMS, -1);
     cb(cur, "result_norm", -1);
 
-    // lm_head from the target model (shared via ctx_other)
-    auto * output   = model.output;
-    auto * output_s = model.output_s;
-    if (output == nullptr) {
-        GGML_ASSERT(cparams.ctx_other != nullptr);
-        const auto * model_other = llama_get_model(cparams.ctx_other);
-        GGML_ASSERT(model_other->output != nullptr && "DSpark decoder requires the target model's output projection");
-        output   = model_other->output;
-        output_s = model_other->output_s;
-    }
-
-    cur = build_lora_mm(output, cur, output_s);
+    const llama_model & head_model = model.output ? model : *llama_get_model(cparams.ctx_other);
+    cur = head_model.output ? build_lora_mm(head_model.output, cur, head_model.output_s, &head_model)
+                            : build_trellis_bands(cur, &head_model);
     cb(cur, "result_output", -1);
     res->t_logits = cur;
 

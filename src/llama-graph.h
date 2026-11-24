@@ -1087,10 +1087,11 @@ struct llm_graph_context {
     ggml_tensor * build_lora_mm(
               ggml_tensor * w,
               ggml_tensor * cur,
-              ggml_tensor * w_s = nullptr) const;
+              ggml_tensor * w_s = nullptr,
+          const llama_model * weights_model = nullptr) const;
 
     // trellis fork: the logits of a coded lm_head in frequency bands (llama_trellis::bands)
-    ggml_tensor * build_trellis_bands(ggml_tensor * cur) const;
+    ggml_tensor * build_trellis_bands(ggml_tensor * cur, const llama_model * weights_model = nullptr) const;
 
     // do mat_mul_id, while optionally apply lora and per-expert scale
     ggml_tensor * build_lora_mm_id(
@@ -1199,6 +1200,7 @@ struct llm_graph_context {
     //
 
     ggml_tensor * build_inp_embd(ggml_tensor * tok_embd) const;
+    ggml_tensor * build_token_rows(ggml_tensor * tok_embd, ggml_tensor * ids, const llama_model * weights_model) const;
     ggml_tensor * build_inp_pos() const;
     ggml_tensor * build_inp_attn_scale() const;
     ggml_tensor * build_inp_out_ids() const;
