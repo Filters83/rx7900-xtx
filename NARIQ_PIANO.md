@@ -14,7 +14,7 @@ Riferimento: setup OpenClaw attuale, fork `d4b007d` con Unsloth UD-Q2_K_XL, DFla
 
 | Misura | Unsloth attuale | NariQ 24/11 | Traguardo minimo | Traguardo pieno |
 | --- | ---: | ---: | ---: | ---: |
-| Generazione senza bozza, llama-bench tg | ~39 t/s | 17,4 t/s | 30 | 39 |
+| Generazione senza bozza, llama-bench tg | ~39 t/s | 17,4 t/s (24,1 dopo A5a) | 30 | 39 |
 | Generazione con DFlash2, contesto breve | ~81 t/s | ~10 t/s | 55 | 75 |
 | Generazione con DFlash2 a 65K | ~80 t/s | n/d | 50 | 70 |
 | Prefill a 32K | ~910 t/s | ~137 t/s | 450 | 800 |
@@ -27,11 +27,12 @@ Il cambio in OpenClaw si propone all'utente quando sono raggiunti i traguardi mi
 
 Aggiornare questa sezione a ogni passaggio di consegne.
 
-- **Ultimo aggiornamento**: 24/11/2026 sera, Claude.
-- **Build di riferimento**: `build/ref-bin` = `build/packaging-x64/bin` (commit `343fe2183`). Le modifiche del 24/11 sera non cambiano la velocità, quindi resta il riferimento.
+- **Ultimo aggiornamento**: 24/11/2026 notte, Claude.
+- **Build di riferimento**: `build/ref-bin` = binari del commit `a66f18956` (A5a). La build precedente resta in `build/packaging-x64/bin` (`343fe2183`).
+- **Ultimo risultato**: A5a fatta, generazione 18,1 → 24,1 t/s (llama-bench tg64), prefill invariato 150 t/s.
 - **Scoperta chiave (A1)**: in generazione il prodotto Trellis (`trellis_matvec`) è il 90% del tempo: circa 52 ms su 57 per token. Tutto il resto (attenzione, strati ricorrenti, rotazioni, input/output) costa 5,2 ms. Del prodotto, circa 28 ms sono calcolo per decodificare i pesi (~14-15 istruzioni per peso) e circa 23 ms letture. Le rotazioni costano ~1-2 ms reali: il profilo per fase le gonfiava a 30 ms.
 - **In corso**: niente. Codice committato e compilabile.
-- **Prossimo passo**: A5a (prodotto con attivazioni int8 e `dot4`), vedi la tabella. È il lavoro che sblocca anche la verifica DFlash2 (B2).
+- **Prossimo passo**: B2 (prodotto int8 a più token: decodificare ogni peso una volta per tutti i token del batch fino a 4, oggi `trellis_matvec_q8` lancia ancora un gruppo per token), poi B1 (misura DFlash2). In parallelo possibile A5b/A5c sul kernel `trellis_matvec_q8` (leggerne l'ISA con `GGML_VK_PIPELINE_ISA=trellis_matvec_q8`).
 
 ## Regole di lavoro
 
@@ -105,7 +106,7 @@ Stato: `da fare`, `in corso (chi)`, `fatto`, `scartato`. Le stime di guadagno so
 | A2 | Rotazioni in un solo passaggio | scartato | Il modello usa solo rotazioni a blocchi (128-4096) già in un passaggio in memoria condivisa; saltare del tutto la rotazione d'ingresso dà solo +4% (17,6 → 18,3 t/s) |
 | A3 | Riuso della rotazione d'ingresso fra proiezioni con lo stesso input | bassa priorità | Vale al massimo ~1-2 ms per token |
 | A4 | Fondere input, rotazione e uscita con il prodotto | bassa priorità | Tutto ciò che non è prodotto vale 5,2 ms per token |
-| A5a | **Prodotto con attivazioni int8 e `dot4`**: un passaggio prima del prodotto quantizza le attivazioni ruotate in int8 per gruppi da 16 (scala float e somma intera per gruppo), nell'ordine in cui le leggono i lane (colonne 2q, 2q+1, 2q+8, 2q+9 di ogni tile). Nel prodotto, per ogni peso: `b = (h >> 2) & 0x3f3f3f3f` e `acc += dot4(b, a_rep)` con `a_rep` = byte dell'attivazione replicato 4 volte (`v_perm`), meno `126 * somma_attivazioni` per tile; scala tile × scala attivazioni in float una volta per tile | da fare | Da ~15 a ~9 istruzioni per peso e una lettura di attivazioni invece di due. Atteso: prodotto da ~52 a ~30-35 ms, generazione ~25-28 t/s. Cambia la numerica (come q8_1 in llama.cpp): controllare logits CPU/Vulkan e KL |
+| A5a | **fatto** (`a66f18956`, +33%). **Prodotto con attivazioni int8 e `dot4`**: un passaggio prima del prodotto quantizza le attivazioni ruotate in int8 per gruppi da 16 (scala float e somma intera per gruppo), nell'ordine in cui le leggono i lane (colonne 2q, 2q+1, 2q+8, 2q+9 di ogni tile). Nel prodotto, per ogni peso: `b = (h >> 2) & 0x3f3f3f3f` e `acc += dot4(b, a_rep)` con `a_rep` = byte dell'attivazione replicato 4 volte (`v_perm`), meno `126 * somma_attivazioni` per tile; scala tile × scala attivazioni in float una volta per tile | da fare | Da ~15 a ~9 istruzioni per peso e una lettura di attivazioni invece di due. Atteso: prodotto da ~52 a ~30-35 ms, generazione ~25-28 t/s. Cambia la numerica (come q8_1 in llama.cpp): controllare logits CPU/Vulkan e KL |
 | A5b | Letture dei pesi: caricare le parole di una tile una volta per sottogruppo (24 parole per TRL3) invece di 4 letture a 32 bit per lane, condividerle con shuffle | da fare | Oggi ~23 ms di letture per 9,6 GB (~420 GB/s effettivi) |
 | A5c | Moltiplicazione dello stato (`state * 0x83dcd12d`, 32 bit, un quarto di velocità su RDNA): cercare una forma che il compilatore non ricomponga | da fare | Spezzarla in due prodotti a 16 bit non serve: il compilatore li ricompone in una sola moltiplicazione a 32 bit |
 
@@ -137,6 +138,8 @@ Stato: `da fare`, `in corso (chi)`, `fatto`, `scartato`. Le stime di guadagno so
 ## Registro delle prove
 
 Voci più recenti in alto. Formato: data, chi, commit o "non committato", cosa, numeri (riferimento → candidato), esito.
+
+- **24/11/2026 notte, Claude**, `a66f18956`: A5a, prodotto int8. Nuovi `trellis_quant.comp` (attivazioni int8 per gruppi di 16, valori replicati per lane + somma e scala) e `trellis_matvec_q8` in `trellis_product.comp`; usato per batch ≤ 4 se il dispositivo ha `integer_dot_product`, `GGML_VK_TRELLIS_Q8=0` torna al prodotto float. Terza area di scratch da 6 byte per input e token (`ggml_vk_trellis_quant_size`). tg64 18,08 → 24,12 t/s; pp512 invariato (150,5). Logits del modello completo, `test-trellis-model --ubatch 1 --predict 6` contro CPU: KL media 4,0e-5, massima 2,2e-4, top-1 31/31 (prodotto float: KL media 1,1e-8). Soglie `test-backend-ops` per t ≤ 4: prodotto e gruppo d'ingresso 5e-5 (misurato ~2e-5), MLP codificato 2e-4 (misurato fino a 8,8e-5); `test-trellis-vulkan*` girano con `GGML_VK_TRELLIS_Q8=0` (controlli elemento per elemento del formato). 416/416, ctest 4/4. Esito: accettato.
 
 - **24/11/2026 sera, Claude** (commit della sessione, vedi `git log`): somma dei 4 byte di `trellis_grid` con spostamenti e somme invece della moltiplicazione per `0x01010101`. Risultato identico, test 416/416, `test-trellis` superato; nel codice macchina di `trellis_matvec` le moltiplicazioni a 32 bit per ciclo passano da 16 a 8. Velocità invariata (tg64 18,07 → 18,05). Esito: tenuta, ma conferma che non basta togliere le moltiplicazioni.
 - **24/11/2026 sera, Claude**: prove a esclusione su tg64 (risultati volutamente sbagliati, interruttori temporanei poi rimossi). Normale 17,60 t/s; senza rotazione d'ingresso 18,29; senza prodotto 193,8; senza prodotto né rotazione 230,3; prodotto con decodifica banale (`float(state & 255)`) 35,0. Quindi per token: prodotto ~52 ms (decodifica ~28, letture ~23), resto 5,2 ms, rotazione d'ingresso ~1 ms. `trellis_matvec`: 35 registri, 1 KB di memoria condivisa, ciclo principale ~110 istruzioni per 8 pesi per lane, 4-6 letture a 32 bit dei codici e 2 da 64 bit delle attivazioni. Esito: priorità ad A5a.
