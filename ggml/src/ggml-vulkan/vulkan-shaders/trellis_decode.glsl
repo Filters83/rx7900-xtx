@@ -9,7 +9,11 @@ const uint TILE_BITS = 256 * BITS;
 
 float trellis_grid(uint state) {
     const uint h = (state & 65535u) * 0x83dcd12du;
-    return float(int((((h >> 2) & 0x3f3f3f3fu) * 0x01010101u) >> 24) - 126);
+    // sum of the four 6-bit bytes of h >> 2 with shifts and adds instead of a multiply by 0x01010101 (a quarter-rate
+    // 32-bit integer multiply on RDNA): every byte is below 64, so no sum carries out of its byte
+    const uint b = (h >> 2) & 0x3f3f3f3fu;
+    const uint t = b + (b >> 16);
+    return float(int((t + (t >> 8)) & 0xffu) - 126);
 }
 
 // Codes store cyclic 16-bit states in the exllamav3 16x16 tile order.

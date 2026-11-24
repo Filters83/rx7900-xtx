@@ -83,6 +83,15 @@ Perplexity con `llama-perplexity -c 256 -b 256 -ub 128 --chunks 1 -fa off -t 8`.
 | NariQ Vulkan cooperative matrix | 8,8387 |
 | Unsloth UD-Q2_K_XL Vulkan | 7,7513 |
 
+Misura più ampia del 24/11, stessa build (`build/packaging-x64`) per entrambi i modelli: `llama-perplexity -c 512 -b 512 -ub 512 --chunks 40 -ngl 999 -dev Vulkan0 -fa on`, stesso file WikiText-2, NariQ con `GGML_VK_TRELLIS_COOPMAT=1`.
+
+| Modello | PPL (40 finestre da 512 token) |
+| --- | ---: |
+| NariQ 3.0 bpw | 6,2455 ± 0,147 |
+| Unsloth UD-Q2_K_XL | 6,2317 ± 0,148 |
+
+NariQ è migliore in 19 finestre su 40; differenza media della log-perplexity per finestra +0,0022 ± 0,0069. Su questo testo le due quantizzazioni sono indistinguibili. La finestra singola da 256 token della tabella precedente non basta per un confronto. Per misurare differenze più fini serve la divergenza KL rispetto a un riferimento ad alta precisione o una prova su compiti.
+
 ## Contesto e cache KV
 
 Avvio di `llama-server` con 1 slot, `-b 512 -ub 256`, `--fit off`, Flash Attention, offload completo e una richiesta 5+4 token. I valori sono i picchi misurati in GiB.

@@ -4,6 +4,9 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
+#include <set>
+#include <string>
 
 static constexpr uint32_t VK_TRELLIS_BATCH = 128;
 static constexpr uint32_t VK_TRELLIS_BLOCK_LIMIT = 4096;
@@ -123,6 +126,21 @@ static void ggml_vk_trellis_side(ggml_backend_vk_context * ctx, vk_context & sub
         }
     }
     pc.run = pc.len / pc.m;
+
+    // GGML_VK_TRELLIS_DEBUG=1: print each distinct transform shape once (width, shards, segment, Paley order, path)
+    static const bool debug = std::getenv("GGML_VK_TRELLIS_DEBUG") != nullptr;
+    if (debug) {
+        static std::mutex mtx;
+        static std::set<std::string> seen;
+        const bool block = pc.m == 1 && pc.nparts == 0 && pc.len <= VK_TRELLIS_BLOCK_LIMIT;
+        const std::string key = "width=" + std::to_string(width) + " kind=" + std::to_string(side[0]) + " shards=" + std::to_string(pc.shards) +
+            " len=" + std::to_string(pc.len) + " m=" + std::to_string(pc.m) + " run=" + std::to_string(pc.run) + " nparts=" + std::to_string(pc.nparts) +
+            " inverse=" + std::to_string(inverse ? 1 : 0) + " path=" + (block ? "block" : "butterfly");
+        std::lock_guard<std::mutex> lock(mtx);
+        if (seen.insert(key).second) {
+            std::cerr << "trellis transform: " << key << " batch=" << batch << std::endl;
+        }
+    }
     auto cross = [&] {
         auto & pipeline = ctx->device->pipeline_trellis_cross;
         pc.scale = 1.0 / std::sqrt(double(pc.m));
