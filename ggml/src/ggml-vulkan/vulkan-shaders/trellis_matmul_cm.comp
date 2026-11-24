@@ -1,0 +1,124 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#pragma use_vulkan_memory_model
+
+// Trellis prompt-batch product on FP16 cooperative matrices. A workgroup of 8 subgroups of 32 covers 32 outputs
+// (two 16-row tiles) and the 128 tokens of the chunk (one 16-token tile per subgroup). Every 64 inputs all 256
+// threads decode the 8 weight tiles (2 rows x 4 columns) into shared memory, as exact FP16 integers, and each
+// subgroup multiplies them with its tokens, read directly from the FP16 activations of trellis_prep16.comp, which
+// already carry the tile scales and a power-of-two range per token. TRELLIS_MM_RESIDUAL also multiplies the FP16
+// rounding residuals of the activations: as exact as the F32 path, about 28% slower (RX 9070, NariQ 3.0 bpw pp512
+// 354 against 490 t/s); without it the activations keep FP16 precision (2^-11 relative).
+
+#include "trellis_decode.glsl"
+
+layout(binding = 2) readonly buffer Act { float16_t act[]; };
+layout(binding = 2) readonly buffer ActScale { float inv_m[]; };
+layout(binding = 3) writeonly buffer Result { float y[]; };
+
+layout(push_constant) uniform Parameters {
+    uint k;
+    uint n;
+    uint batch;
+    uint scale_offset;
+} p;
+
+layout(local_size_x = 256) in;
+
+const uint TOKENS = 128;
+const uint ROW_TILES = 2;
+const uint K_TILES = 4;
+const uint W_STRIDE = 16 * K_TILES;
+shared float16_t w[ROW_TILES * 16 * W_STRIDE];
+shared float result[8 * ROW_TILES * 256];
+
+void main() {
+    const uint tid = gl_LocalInvocationID.x;
+    const uint sg = gl_SubgroupID;
+    const uint tile_k = p.k / 16;
+    const uint row_tile0 = ROW_TILES * gl_WorkGroupID.x;
+    const uint row_tiles = min(ROW_TILES, p.n / 16 - row_tile0);
+    const uint token0 = 16 * sg;
+
+    // decode slot of this thread: weight tile (row tile, input tile) and lane in the tile
+    const uint slot = tid / 32;
+    const uint lane = tid % 32;
+    const uint rt = slot / K_TILES;
+    const uint kt = slot % K_TILES;
+
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> acc0 =
+        coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> acc1 =
+        coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+#ifdef TRELLIS_MM_RESIDUAL
+    // products with the FP16 rounding residuals of the activations (times 2^11)
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> res0 =
+        coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> res1 =
+        coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+    const uint lo_base = TOKENS * p.k;
+#endif
+
+    for (uint k0 = 0; k0 < tile_k; k0 += K_TILES) {
+        if (rt < row_tiles && k0 + kt < tile_k) {
+            const uint tile = ((row_tile0 + rt) * tile_k + k0 + kt) * TILE_WORDS;
+            const vec4 lo = trellis_decode4(tile, 8 * lane);
+            const vec4 hi = trellis_decode4(tile, 8 * lane + 4);
+            const uint row = rt * 16 + lane / 4;
+            [[unroll]] for (uint i = 0; i < 4; ++i) {
+                const uint col = kt * 16 + 2 * (lane % 4) + i % 2 + 8 * (i / 2);
+                w[row * W_STRIDE + col] = float16_t(lo[i]);
+                w[(row + 8) * W_STRIDE + col] = float16_t(hi[i]);
+            }
+        }
+        barrier();
+        [[unroll]] for (uint kt2 = 0; kt2 < K_TILES; ++kt2) {
+            if (k0 + kt2 < tile_k) {
+                const uint offset = token0 * p.k + (k0 + kt2) * 16;
+                coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> b;
+                coopMatLoad(b, act, offset, p.k, gl_CooperativeMatrixLayoutColumnMajor);
+#ifdef TRELLIS_MM_RESIDUAL
+                coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> b_lo;
+                coopMatLoad(b_lo, act, lo_base + offset, p.k, gl_CooperativeMatrixLayoutColumnMajor);
+#endif
+                coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> a;
+                coopMatLoad(a, w, kt2 * 16, W_STRIDE, gl_CooperativeMatrixLayoutRowMajor);
+                acc0 = coopMatMulAdd(a, b, acc0);
+#ifdef TRELLIS_MM_RESIDUAL
+                res0 = coopMatMulAdd(a, b_lo, res0);
+#endif
+                if (row_tiles > 1) {
+                    coopMatLoad(a, w, 16 * W_STRIDE + kt2 * 16, W_STRIDE, gl_CooperativeMatrixLayoutRowMajor);
+                    acc1 = coopMatMulAdd(a, b, acc1);
+#ifdef TRELLIS_MM_RESIDUAL
+                    res1 = coopMatMulAdd(a, b_lo, res1);
+#endif
+                }
+            }
+        }
+        barrier();
+    }
+
+#ifdef TRELLIS_MM_RESIDUAL
+    acc0 += res0 * (1.0 / 2048.0);
+    acc1 += res1 * (1.0 / 2048.0);
+#endif
+    coopMatStore(acc0, result, (sg * ROW_TILES) * 256, 16, gl_CooperativeMatrixLayoutColumnMajor);
+    coopMatStore(acc1, result, (sg * ROW_TILES + 1) * 256, 16, gl_CooperativeMatrixLayoutColumnMajor);
+    barrier();
+    const uint scale_base = TOKENS * p.k;
+    for (uint i = tid; i < 8 * ROW_TILES * 256; i += 256) {
+        const uint s = i / (ROW_TILES * 256);
+        const uint r = (i / 256) % ROW_TILES;
+        const uint e = i % 256;
+        const uint token = 16 * s + e / 16;
+        if (r < row_tiles && token < p.batch) {
+            y[token * p.n + (row_tile0 + r) * 16 + e % 16] = result[i] * inv_m[scale_base + token];
+        }
+    }
+}
