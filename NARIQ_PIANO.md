@@ -17,7 +17,7 @@ Riferimento: setup OpenClaw attuale, fork `d4b007d` con Unsloth UD-Q2_K_XL, DFla
 | Generazione senza bozza, llama-bench tg | ~39 t/s | 17,4 t/s (24,9 al 25/11) | 30 | 39 |
 | Generazione con DFlash2, contesto breve | ~81 t/s | ~10 t/s (~41 al 25/11, prompt ripetitivo) | 55 | 75 |
 | Generazione con DFlash2 a 65K | ~80 t/s | n/d | 50 | 70 |
-| Prefill a 32K | ~910 t/s (llama-bench d32768: 766) | ~137 t/s (395 al 25/11, llama-bench d32768) | 450 | 800 |
+| Prefill a 32K | ~910 t/s (llama-bench d32768: 766) | ~137 t/s (472 al 25/11, llama-bench d32768) | 450 | 800 |
 | VRAM di picco, OpenClaw completo | 14,1-14,5 GiB | n/d | ≤ 14,5 GiB | ≤ 14,5 GiB |
 | Qualità | | | logits Vulkan = CPU (top-1 31/31, KL < 1e-6) | idem |
 
@@ -28,15 +28,15 @@ Il cambio in OpenClaw si propone all'utente quando sono raggiunti i traguardi mi
 Aggiornare questa sezione a ogni passaggio di consegne.
 
 - **Ultimo aggiornamento**: 25/11/2026 notte, Claude.
-- **Build di riferimento**: `build/ref-bin` = binari del commit `af07eaa13` (C3). La build iniziale resta in `build/packaging-x64/bin` (`343fe2183`).
-- **Ultimi risultati**: generazione senza bozza 17,5 → 24,9 t/s; con DFlash2 a 3 token ~41 t/s sul prompt ripetitivo di prova (prima ~10). **Prefill (C3) 150 → ~490 t/s a contesto vuoto, 147 → 395 a 32K** (llama-bench). Il percorso cooperativo è ora predefinito (`GGML_VK_TRELLIS_COOPMAT=0` per disattivarlo): non serve più impostare la variabile.
+- **Build di riferimento**: `build/ref-bin` = binari del commit `71b71362e` (C3, versione 64 × 32). La build iniziale resta in `build/packaging-x64/bin` (`343fe2183`).
+- **Ultimi risultati**: generazione senza bozza 17,5 → 24,9 t/s; con DFlash2 a 3 token ~41 t/s sul prompt ripetitivo di prova (prima ~10). **Prefill (C3) 150 → ~602 t/s a contesto vuoto, 147 → 472 a 32K** (llama-bench): traguardo minimo del prefill raggiunto. Il percorso cooperativo è ora predefinito (`GGML_VK_TRELLIS_COOPMAT=0` per disattivarlo): non serve più impostare la variabile.
 - **Riferimento NVIDIA**: Nari Labs dichiara 88,9 t/s a 4K e 70,7 a 64K su una RTX PRO 6000 (Blackwell, ~1,8 TB/s, circa 2,8 volte la banda della RX 9070), senza speculazione, cache KV BF16. In proporzione alla banda equivarrebbero a ~32 t/s qui. Il GGUF pubblicato non contiene il modulo MTP ("non ancora quantizzato"), quindi MTP non è disponibile; le alternative alla bozza DFlash2 sono `ngram-simple` (nessun modello, utile su testo ripetitivo e codice) o nessuna speculazione.
 - **Profilo di un ciclo DFlash2 (B4)**: il ciclo (~83 ms) è dominato dai prodotti Trellis a 4 token del modello (il prodotto a 4 token costa ~1,9 volte quello a 1 token: la decodifica di ogni peso, ~7 istruzioni, si fa una volta, ma ogni token aggiunge un `dot4` per peso e due letture per tile). La bozza costa ~10 ms per ciclo, ~6 nelle bande della testa di uscita Trellis condivisa (normali: 5120 → 15488 a 4 token 197 µs). Le proiezioni da 48 righe erano anomale (corrette in `7a5cae586`).
 - **Valutazione onesta**: la decodifica Trellis costa ~7 istruzioni per peso su RDNA (una moltiplicazione intera a 32 bit, a un quarto di velocità, più estrazioni di bit), contro ~1-2 per i formati IQ/K di Unsloth. Il limite stimato in generazione è ~28-30 t/s senza bozza e ~45-50 con DFlash2 su testo ripetitivo; la parità con Unsloth (39 / ~80) non sembra raggiungibile con questo formato su questa scheda. Ho provato a evitare la moltiplicazione con due prodotti a 24 bit: il compilatore li ricompone in una moltiplicazione a 32 bit, e una versione che non si ricompone costa le stesse istruzioni.
-- **Prefill e OpenClaw**: a 395 t/s un prompt da 32K richiede ~80 s (Unsloth ~40 s, prima ~3,5 minuti). Il traguardo minimo di 450 a 32K non è ancora raggiunto.
+- **Prefill e OpenClaw**: a 472 t/s un prompt da 32K richiede ~68 s (Unsloth ~40 s, prima ~3,5 minuti).
 - **Scoperta chiave (A1)**: in generazione il prodotto Trellis (`trellis_matvec`) è il 90% del tempo: circa 52 ms su 57 per token. Tutto il resto (attenzione, strati ricorrenti, rotazioni, input/output) costa 5,2 ms. Del prodotto, circa 28 ms sono calcolo per decodificare i pesi (~14-15 istruzioni per peso) e circa 23 ms letture. Le rotazioni costano ~1-2 ms reali: il profilo per fase le gonfiava a 30 ms.
 - **In corso**: niente. Codice committato e compilabile.
-- **Prossimo passo**: C1 (profilo del prefill a 512 token con i nomi Trellis nel profilatore) sul nuovo kernel `trellis_matmul_cm.comp`, per decidere fra: blocchi di token più grandi (oggi 128 per pezzo, `VK_TRELLIS_BATCH`: ogni peso si decodifica 4 volte per 512 token), più righe per gruppo, decodifica in anticipo del blocco successivo (doppio buffer in memoria condivisa, entro 32 KB). Poi D1-D2 (profilo OpenClaw e confronto completo) per decidere con l'utente.
+- **Prossimo passo**: D1-D2, cioè profilo `qwen38-nariq` nel launcher di OpenClaw (`D:\Progetti\openclaw\scripts\Start-OpenClaw-Local.ps1`, ora nessuna variabile Trellis da impostare: il percorso cooperativo è predefinito) e confronto completo con prompt reali, DFlash2 a 3 token e VRAM di picco, per decidere con l'utente. Margini ancora aperti sul prefill: blocchi di token più grandi (`VK_TRELLIS_BATCH` = 128: ogni peso si decodifica 4 volte per 512 token), decodifica in anticipo del passo successivo (doppio buffer in memoria condivisa).
 - **Script di prova del server**: lo scratchpad di Claude non è condiviso. Per una prova equivalente avviare `build\bin\llama-server.exe` con gli argomenti dell'esempio in `NARIQ_VULKAN_PROGRESS.md` più `--spec-type draft-dflash --spec-draft-model D:\Progetti\openclaw\models\qwen38-27b-dflash2\Qwen3.8-27B-DFlash2-Q4_K_M.gguf --spec-draft-device Vulkan0 --spec-draft-ngl 99 --spec-draft-type-k q4_0 --spec-draft-type-v q4_0 --spec-draft-n-max 3 --spec-accept rejection -bs --spec-draft-vocab 65536`, `-c 32768 -ub 512`, e inviare a `/completion` un prompt di ~1500 token con `n_predict` 256; leggere `timings.predicted_per_second`, `draft_n`, `draft_n_accepted`.
 
 ## Regole di lavoro
@@ -132,6 +132,7 @@ Stato: `da fare`, `in corso (chi)`, `fatto`, `scartato`. Le stime di guadagno so
 | C1 | Profilo del prefill a 512 token per fase | da fare | Il 24/11: prodotto 89% del tempo |
 | C2 | Preparare `act_hi`/`act_lo` una volta per proiezione invece che per gruppo | fatto in C3 | `trellis_prep16.comp`; il residuo è opzionale (`GGML_VK_TRELLIS_MM_RESIDUAL=1`, 28% più lento, usato dal test elemento per elemento) |
 | C3 | Prodotto cooperativo con tile più grandi entro i 32 KB di memoria condivisa del driver Windows; decodifica dei pesi una volta per tile | fatto (`af07eaa13`) | 32 uscite × 128 token per gruppo, 256 thread che decodificano 8 tile ogni 64 input, attivazioni FP16 preparate una volta per pezzo con una potenza di 2 per token. pp512 150 → ~490, 32K 147 → 395 |
+| C5 | Prodotto cooperativo: forma del gruppo di lavoro | fatto (`71b71362e`) | 64 righe × 32 input per passo, migliore di 2×4, 4×4, 4×1, 8×1, 8×2 (vedi registro); k diviso per le proiezioni da 48 righe |
 | C4 | Attenzione del prefill: verificare che la cache q4_0 usi la conversione f16 (`74856e4`) anche con NariQ | da fare | Comune ai due modelli |
 
 ### Fase D: integrazione in OpenClaw
@@ -142,9 +143,17 @@ Stato: `da fare`, `in corso (chi)`, `fatto`, `scartato`. Le stime di guadagno so
 | D2 | Confronto completo con `tools\Run-Qwen38-VulkanAB.ps1` e VRAM di picco con il contesto di produzione | da fare | |
 | D3 | Sessione reale di Jarvis e analisi del log | da fare | |
 
+### Fase E: alternative
+
+| ID | Attività | Stato | Note |
+| --- | --- | --- | --- |
+| E1 | Valutare un backend HIP (ROCm SDK 7.1 già installato in `C:\Program Files\AMD\ROCm\7.1`): compilare il fork Nari Labs con la PR HIP per RX 7900 XTX (nari-labs/nari-llama.cpp#3) per gfx1201 su Windows e misurare NariQ | da valutare con l'utente | Vantaggi possibili per i soli kernel Trellis: moltiplicazione a 24 bit esplicita (`__umul24`), 64 KB di memoria condivisa per gruppo, intrinseci per permutazioni e WMMA, kernel CUDA di Nari Labs adattabili. Svantaggi: tutto il resto del modello girerebbe su llama.cpp HIP, che su questa macchina era più lento di Vulkan in generazione (prove del 09/11 in OpenClaw), e le ottimizzazioni di questo fork (attenzione per il driver AMD, DFlash2, MTP, ecc.) non ci sono |
+
 ## Registro delle prove
 
 Voci più recenti in alto. Formato: data, chi, commit o "non committato", cosa, numeri (riferimento → candidato), esito.
+
+- **25/11/2026 notte, Claude**, `71b71362e`: forma del prodotto cooperativo. pp512 per righe × input per passo: 2 × 4 519 t/s, 4 × 4 483, **4 × 2 602-626**, 4 × 1 601, 8 × 1 566-569, 8 × 2 520 (prove alternate, varianti temporanee poi rimosse; 380/380 test TRELLIS per ognuna). Con 4 × 2 e k diviso per le proiezioni da 48 righe: pp512 485 → 602 (con residuo 353 → 452), a 32K 395 → 472, tg64 24,4. KL sul prompt 6,6e-8, top-1 identico. Prima, con 2 × 4, la sola divisione di k aveva dato pp512 ~481 → ~504. 416/416, ctest 4/4. Esito: accettato.
 
 - **25/11/2026 notte, Claude**, `af07eaa13`: C3, nuovo prodotto cooperativo (`trellis_prep16.comp` + `trellis_matmul_cm.comp`). pp512 150,6 → 485-502 t/s; con il residuo 353; a 32K (`-d 32768`) 146,6 → 395,4; tg64 invariato (24,75). Perf 5120 → 17408 a 16 token: TRL3 1041 → 695 µs. Logits del modello completo con micro-batch da 32 token, sulle 25 posizioni del prompt: KL media 6,7e-8 (un termine FP16), 1,3e-8 (con residuo), 6,4e-9 (kernel precedente), top-1 identico. Un solo termine FP16 senza potenza di 2 per token non era stato provato; con un solo termine `test-trellis-vulkan-coopmat` fallisce di poco (TRL1: -10,3191 contro -10,3261, tolleranza 2e-4 × (1 + |atteso|)), quindi quel test usa la variante con residuo. 416/416 con e senza percorso cooperativo, ctest 4/4. Esito: accettato, percorso cooperativo predefinito.
 
