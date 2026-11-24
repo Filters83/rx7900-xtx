@@ -67,6 +67,8 @@ if (Vulkan_FOUND)
                              ggml-vulkan-common.h
                              ggml-vulkan-buffers.cpp
                              ggml-vulkan-debug.cpp
+                             ggml-vulkan-trellis.cpp
+                             ggml-vulkan-trellis.h
                             )
 
     set(VULKAN_SHADER_GEN_CMAKE_ARGS "")

@@ -1,4 +1,5 @@
 #include "ggml-vulkan-common.h"
+#include "ggml-vulkan-trellis.h"
 
 namespace {
 inline std::ostream & operator<<(std::ostream & os, vk::Buffer buffer) {
@@ -3310,6 +3311,27 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
 
     ggml_vk_create_pipeline(device, device->pipeline_norm_f32, "norm_f32", norm_f32_len, norm_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_group_norm_f32, "group_norm_f32", group_norm_f32_len, group_norm_f32_data, "main", 2, sizeof(vk_op_push_constants), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_trellis_input, "trellis_input", trellis_input_len, trellis_input_data, "main", 4, sizeof(vk_trellis_io), {256, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_trellis_output, "trellis_output", trellis_output_len, trellis_output_data, "main", 4, sizeof(vk_trellis_io), {256, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_trellis_store_rows, "trellis_store_rows", trellis_store_rows_len, trellis_store_rows_data, "main", 6, sizeof(vk_trellis_io), {256, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_trellis_block, "trellis_block", trellis_block_len, trellis_block_data, "main", 1, sizeof(vk_trellis_transform), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_trellis_butterfly, "trellis_butterfly", trellis_butterfly_len, trellis_butterfly_data, "main", 1, sizeof(vk_trellis_transform), {256, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_trellis_cross, "trellis_cross", trellis_cross_len, trellis_cross_data, "main", 2, sizeof(vk_trellis_transform), {256, 1, 1}, {}, 1);
+    for (uint32_t i = 0; i < 6; ++i) {
+        ggml_vk_create_pipeline(device, device->pipeline_trellis_decode_rows[i], "trellis_decode_rows", trellis_decode_rows_len, trellis_decode_rows_data, "main", 5, sizeof(vk_trellis_io), {256, 1, 1}, {i + 1}, 1);
+        ggml_vk_create_pipeline(device, device->pipeline_trellis_matvec[i], "trellis_matvec", trellis_matvec_len, trellis_matvec_data, "main", 4, sizeof(vk_trellis_product), {16, 1, 1}, {i + 1}, 1);
+        ggml_vk_create_pipeline(device, device->pipeline_trellis_matmul[i], "trellis_matmul", trellis_matmul_len, trellis_matmul_data, "main", 4, sizeof(vk_trellis_product), {16, 16, 1}, {i + 1}, 1);
+#if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
+        if (device->coopmat_support && device->coopmat_support_16x16x16_f32acc && device->vulkan_memory_model && device->fp16) {
+            const uint32_t subgroup = device->vendor_id == VK_VENDOR_ID_AMD && device->subgroup_size_control ? 32 : device->subgroup_size;
+            if (4 * subgroup <= device->properties.limits.maxComputeWorkGroupInvocations) {
+                ggml_vk_create_pipeline(device, device->pipeline_trellis_matmul_cm1[i], "trellis_matmul_cm1",
+                                        trellis_matmul_cm1_len, trellis_matmul_cm1_data, "main", 4, sizeof(vk_trellis_product),
+                                        {16, 64, 1}, {i + 1, 4 * subgroup}, 1, false, true, subgroup);
+            }
+        }
+#endif
+    }
 
     ggml_vk_create_pipeline(device, device->pipeline_rms_norm_f32, "rms_norm_f32", rms_norm_f32_len, rms_norm_f32_data, "main", 4, sizeof(vk_op_binary_push_constants), {1, 1, 1}, {0, 0}, 1, true);
     ggml_vk_create_pipeline(device, device->pipeline_rms_norm_mul_f32, "rms_norm_mul_f32", rms_norm_f32_len, rms_norm_f32_data, "main", 4, sizeof(vk_op_binary_push_constants), {1, 1, 1}, {0, 1}, 1, true);
@@ -13225,6 +13247,10 @@ bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgraph, in
         ggml_vk_get_rows_back(ctx, compute_ctx, src0, src1, node);
 
         break;
+    case GGML_OP_TRELLIS:
+    case GGML_OP_TRELLIS_GET_ROWS:
+        ggml_vk_trellis(ctx, compute_ctx, node);
+        break;
     case GGML_OP_ADD:
         if (ctx->num_additional_fused_ops) {
             ggml_vk_multi_add(ctx, compute_ctx, cgraph, node_idx);
@@ -13764,6 +13790,7 @@ void ggml_vk_cleanup(ggml_backend_vk_context * ctx) {
     ggml_vk_destroy_buffer(ctx->prealloc_y);
     ggml_vk_destroy_buffer(ctx->prealloc_split_k);
     ggml_vk_destroy_buffer(ctx->prealloc_add_rms_partials);
+    ggml_vk_destroy_buffer(ctx->trellis_scratch);
     ggml_vk_destroy_buffer(ctx->sync_staging);
 
     ctx->prealloc_y_last_pipeline_used = nullptr;
@@ -16073,6 +16100,23 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
 
     g_vk_ab.refresh();
 
+    size_t trellis_scratch_size = 0;
+    for (int i = 0; i < cgraph->n_nodes; ++i) {
+        const ggml_tensor * node = cgraph->nodes[i];
+        if ((node->op == GGML_OP_TRELLIS || node->op == GGML_OP_TRELLIS_GET_ROWS) && !ggml_is_empty(node)) {
+            trellis_scratch_size = std::max(trellis_scratch_size, 2 * ggml_vk_trellis_scratch_stride(ctx->device, node));
+        }
+    }
+    if (trellis_scratch_size > (ctx->trellis_scratch ? ctx->trellis_scratch->size : 0)) {
+        if (ctx->trellis_scratch) {
+            ggml_backend_vk_synchronize(backend);
+            ctx->device->buffer_epoch.fetch_add(1, std::memory_order_relaxed);
+        }
+        auto scratch = ggml_vk_create_buffer_device(ctx->device, trellis_scratch_size);
+        ggml_vk_destroy_buffer(ctx->trellis_scratch);
+        ctx->trellis_scratch = std::move(scratch);
+    }
+
     // GGML_VK_GRAPH_REPLAY: submit the matching recorded graph again, or record this one into an entry
     vk_graph_replay * replay = nullptr;
     if (ggml_vk_replay_supported(ctx)) {
@@ -17437,6 +17481,9 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
     }
 
     switch (op->op) {
+        case GGML_OP_TRELLIS:
+        case GGML_OP_TRELLIS_GET_ROWS:
+            return ggml_vk_trellis_supported(device, op);
         case GGML_OP_UNARY:
             switch (ggml_get_unary_op(op)) {
                 case GGML_UNARY_OP_EXP:

@@ -868,6 +868,10 @@ struct vk_device_struct {
     vk_pipeline pipeline_set_rows_i64[2][GGML_TYPE_COUNT];
     vk_pipeline pipeline_norm_f32;
     vk_pipeline pipeline_group_norm_f32;
+    vk_pipeline pipeline_trellis_input, pipeline_trellis_output, pipeline_trellis_store_rows;
+    vk_pipeline pipeline_trellis_block, pipeline_trellis_butterfly, pipeline_trellis_cross;
+    vk_pipeline pipeline_trellis_matvec[6], pipeline_trellis_matmul[6], pipeline_trellis_decode_rows[6];
+    vk_pipeline pipeline_trellis_matmul_cm1[6];
     vk_pipeline pipeline_rms_norm_f32;
     vk_pipeline pipeline_rms_norm_mul_f32;
     vk_pipeline pipeline_rms_norm_mul_q8_1_f32[2];      // rows up to 512, up to 8192 values
@@ -1331,6 +1335,7 @@ struct ggml_backend_vk_context {
     ggml_vk_garbage_collector gc;
     size_t prealloc_size_x, prealloc_size_y, prealloc_size_split_k, prealloc_size_add_rms_partials, prealloc_size_add_rms_partials_offset;
     vk_buffer prealloc_x, prealloc_y, prealloc_split_k, prealloc_add_rms_partials, sync_staging;
+    vk_buffer trellis_scratch;
     vk::Fence fence, almost_ready_fence;
     bool submit_pending {};
     bool almost_ready_fence_pending {};
