@@ -2,6 +2,13 @@
 
 Stato al 24 novembre 2026. Branch sperimentale `nariq-vulkan-rdna4`.
 
+## Punto di partenza per chi riprende il lavoro
+
+- Il commit `1493ad894` contiene il decoder ottimizzato e il profiler per fase. La build di riferimento per le nuove prove è quella ottenuta da questo commit o da un suo discendente con gli stessi kernel.
+- Su questa macchina il binario ottimizzato è in `build/packaging-x64/bin`. La bozza GitHub con archivio `llama-nariq-vulkan-windows-x64-095f09b95.zip` contiene la build precedente. Per provare il decoder aggiornato da un nuovo checkout, seguire la sezione [Riproduzione delle prove](#riproduzione-delle-prove).
+- Baseline sulla RX 9070 con il GGUF 3.0 bpw e prefill cooperativo. 65/65 layer su Vulkan, cache Q4, 150,77 tok/s nel prefill da 256 token e 17,39 tok/s nella generazione da 32 token. Le variazioni vanno confrontate con la stessa configurazione e con una cattura dei logits.
+- Per decidere il passo successivo, vedere [Profiling degli operatori Trellis](#profiling-degli-operatori-trellis) e [Priorità di ottimizzazione](#priorità-di-ottimizzazione).
+
 ## Confronto dei repository
 
 | Sorgente | Revisione verificata | Ruolo |
@@ -135,6 +142,8 @@ Lo script imposta AVX2, FMA e F16C esplicitamente per il Ryzen 7 5800X. La sonda
 
 Prove locali sulla RX 9070 con lo stesso GGUF 3.0 bpw, offload Vulkan, Flash Attention, cache Q4 e prefill cooperativo. Il profiler usa `GGML_VK_PERF_LOGGER=1` e `GGML_VK_TRELLIS_PROFILE=1` con il logger concorrente disattivato. I timestamp comprendono le attese fra dispatch. I benchmark A/B qui sotto sono eseguiti con il profiler disattivato.
 
+Il dispatch in [`ggml-vulkan-trellis.cpp`](ggml/src/ggml-vulkan/ggml-vulkan-trellis.cpp) prepara le attivazioni con scala e permutazione, applica la Hadamard, lancia il prodotto e applica le trasformazioni d'uscita del tensore. La [decodifica](ggml/src/ggml-vulkan/vulkan-shaders/trellis_decode.glsl) estrae i valori dalle finestre di stato mentre il [kernel di prodotto](ggml/src/ggml-vulkan/vulkan-shaders/trellis_product.comp) lavora sulle tile. Le query Vulkan marcano inizio e fine dei passaggi. Il log `Trellis GPU us` somma gli intervalli di tutte le proiezioni del grafo. La voce `product` include decodifica, preparazione delle tile e moltiplicazione. Per differenziare il costo di banda, registri, LDS e barriere servono contatori GPU.
+
 | Fase | Tempo GPU totale | Prodotto Trellis | Rotazione d'ingresso |
 | --- | ---: | ---: | ---: |
 | Prefill 256 token | 1.790 ms | 1.594 ms (89,0%) | 118 ms (6,6%) |
@@ -154,7 +163,47 @@ Superati 4/4 CTest e 416/416 casi Vulkan per Trellis e lookup delle righe. I 31 
 
 `llama-server` ha completato una richiesta con un prompt breve e 12 token generati a 17,44 tok/s, con contesto configurato a 8.192 token, cache Q4 e 65/65 layer su Vulkan.
 
-La prossima prova per il prefill predispone i due termini FP16 delle attivazioni dopo la rotazione e li riusa fra i gruppi che elaborano righe diverse. Il confronto deve conservare le soglie di parità e misurare prefill e decode a 8K e 32K oltre ai test brevi.
+## Riproduzione delle prove
+
+Da un nuovo checkout Windows x64 del branch, usare `scripts\build-vulkan-windows.cmd` con MSVC e Vulkan SDK. Lo script crea gli eseguibili in `build/bin`. Nel checkout locale qui sotto si usa la build già pronta in `build/packaging-x64/bin`. Sostituire `$build` con `'.\build'` dopo una compilazione tramite script. Eseguire dalla radice del repository, con il GGUF 3.0 bpw disponibile in `models`.
+
+```powershell
+$build = '.\build\packaging-x64'
+$bin = Join-Path $build 'bin'
+$model = '.\models\Qwen3.8-27B-NariQ-3.0bpw.gguf'
+$env:GGML_VK_TRELLIS_COOPMAT = $null
+$env:GGML_VK_PERF_LOGGER = $null
+$env:GGML_VK_TRELLIS_PROFILE = $null
+$env:GGML_VK_PERF_LOGGER_CONCURRENT = $null
+
+ctest --test-dir $build --output-on-failure -R '^test-trellis(-vulkan(-coopmat)?|-metadata)?$'
+& "$bin\test-backend-ops.exe" test -b Vulkan0 -o TRELLIS,TRELLIS_GET_ROWS
+$env:GGML_VK_TRELLIS_COOPMAT = '1'
+& "$bin\llama-bench.exe" -m $model -p 256 -n 32 -r 3 -b 512 -ub 256 `
+  -fa on -ctk q4_0 -ctv q4_0 -ngl 999 -dev Vulkan0 -o json
+```
+
+Per il confronto numerico, catturare i logits CPU e Vulkan sugli stessi token, usando la sequenza CPU anche sulla GPU. Il test manuale imposta Flash Attention su OFF per la parità. Il confronto di prestazioni sopra la usa su ON.
+
+```powershell
+$prompt = 'The capital of France is Paris. Berlin is the capital of Germany. Madrid is the capital of Spain. The capital of Italy is'
+$argsModello = @('--model', $model, '--prompt', $prompt, '--ubatch', '32', '--predict', '6', '--threads', '8')
+$cpu = Join-Path $build 'handoff-cpu'
+$gpu = Join-Path $build 'handoff-vulkan'
+& "$bin\test-trellis-model.exe" @argsModello --gpu-layers 0 --output $cpu
+& "$bin\test-trellis-model.exe" @argsModello --gpu-layers 999 --force "$cpu.json" --output $gpu
+python .\nariq\compare_logits.py $cpu $gpu
+```
+
+Per una cattura diagnostica, impostare `$env:GGML_VK_PERF_LOGGER = '1'` e `$env:GGML_VK_TRELLIS_PROFILE = '1'` e rilanciare il benchmark raccogliendo `stderr`. Lasciare `GGML_VK_PERF_LOGGER_CONCURRENT` disattivata. Escludere il riscaldamento quando si confrontano i tempi per grafo. Rimuovere le due variabili prima di ripetere le misure di throughput.
+
+Per il server, usare l'esempio in [Build e avvio](#build-e-avvio) con il binario della stessa build. Verificare nel log `file type = NariQ Trellis`, `offloaded 65/65 layers to GPU` e il buffer modello su `Vulkan0`. In una prova a 8K o 32K registrare il numero effettivo di token elaborati, il tempo al primo token, la velocità di generazione e la VRAM dedicata e condivisa, con lo stesso stato della cache prompt fra le build.
+
+## Priorità di ottimizzazione
+
+1. **Prefill.** In `TRELLIS_COOPMAT`, gruppi che producono righe diverse ricalcolano oggi gli stessi valori `act_hi` e `act_lo`. Provare a prepararli una volta per proiezione e microbatch, dopo la rotazione, riusandoli dal prodotto. Conservare la scala e il residuo esistenti con accumulo FP32. Misurare se il lavoro risparmiato supera il costo del dispatch e del buffer aggiuntivi. La variante con un solo termine FP16 fallisce un caso sintetico TRL1.
+2. **Generazione.** Misurare di nuovo il decoder aggiornato e raccogliere contatori per il prodotto vettoriale e per la Hadamard a blocchi da 128. Le priorità da verificare sono il costo delle barriere, il traffico LDS e l'uso delle wave32. La prova che fonde solo preparazione e rotazione ha dato un guadagno quasi nullo nel secondo A/B.
+3. **Accettazione.** Ripetere i test sintetici, confrontare il GGUF reale col riferimento CPU e misurare A-B-B-A con il profiler spento. Passare poi a prompt reali da 8K e 32K. Per confrontare Unsloth, usare lo stesso eseguibile e le stesse impostazioni del server e misurare anche una richiesta tipica di OpenClaw. Il confronto pubblicato sopra usa build diverse e la prova di perplexity copre una sola finestra.
 
 ## Lavoro aperto
 
