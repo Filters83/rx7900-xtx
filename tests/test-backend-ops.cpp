@@ -2505,9 +2505,11 @@ struct test_trellis : public test_case {
         return v;
     }
 
-    // the CUDA kernels round the activations to FP16, with one scale per 128 inputs
+    // the CUDA kernels round the activations to FP16, with one scale per 128 inputs; the Vulkan decode and verify
+    // path (up to 4 tokens) quantizes them to int8 with one scale per 16 inputs (NMSE about 2e-5; full NariQ 3.0 bpw
+    // model, logits against the CPU: mean KL 4e-5, same top-1 at 31 of 31 positions)
     double max_nmse_err() override {
-        return 1e-5;
+        return t <= 4 ? 5e-5 : 1e-5;
     }
 
     test_trellis(ggml_type type, int64_t k, int64_t n, int64_t t, trellis_side rows, trellis_side cols,
@@ -2557,8 +2559,9 @@ struct test_trellis_mlp : public test_case {
         return VARS_TO_STR5(type, n_embd, n_ff, t, block);
     }
 
+    // three products in a row: the int8 activations of the Vulkan path for up to 4 tokens (see test_trellis) add up
     double max_nmse_err() override {
-        return 1e-5;
+        return t <= 4 ? 2e-4 : 1e-5;
     }
 
     bool run_whole_graph() override { return true; }
@@ -2601,8 +2604,9 @@ struct test_trellis_group : public test_case {
         return VARS_TO_STR2(k, t);
     }
 
+    // int8 activations of the Vulkan path for up to 4 tokens, see test_trellis
     double max_nmse_err() override {
-        return 1e-5;
+        return t <= 4 ? 5e-5 : 1e-5;
     }
 
     bool run_whole_graph() override { return true; }

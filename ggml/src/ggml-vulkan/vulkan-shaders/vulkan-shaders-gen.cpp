@@ -850,6 +850,10 @@ void process_shaders() {
     string_to_spv("trellis_decode_rows", "trellis_io.comp", {{"TRELLIS_DECODE_ROWS", "1"}});
     string_to_spv("trellis_store_rows", "trellis_io.comp", {{"TRELLIS_STORE_ROWS", "1"}});
     string_to_spv("trellis_matvec", "trellis_product.comp", {{"TRELLIS_MATVEC", "1"}});
+#if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
+    string_to_spv("trellis_matvec_q8", "trellis_product.comp", {{"TRELLIS_MATVEC_Q8", "1"}});
+#endif
+    string_to_spv("trellis_quant", "trellis_quant.comp", {});
     string_to_spv("trellis_matmul", "trellis_product.comp", {});
 #if defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
     string_to_spv("trellis_matmul", "trellis_product.comp", {{"TRELLIS_COOPMAT", "1"}}, true, true);

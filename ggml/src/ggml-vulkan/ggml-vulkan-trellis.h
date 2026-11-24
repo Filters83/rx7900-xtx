@@ -23,6 +23,7 @@ struct vk_trellis_transform {
 };
 
 size_t ggml_vk_trellis_scratch_stride(const vk_device & device, const ggml_tensor * op);
+size_t ggml_vk_trellis_quant_size(const vk_device & device, const ggml_tensor * op);
 bool ggml_vk_trellis_supported(const vk_device & device, const ggml_tensor * op);
 uint32_t ggml_vk_trellis_profile_queries(const ggml_cgraph * graph);
 void ggml_vk_trellis_print_profile(ggml_backend_vk_context * ctx);

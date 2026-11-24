@@ -3316,10 +3316,16 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     ggml_vk_create_pipeline(device, device->pipeline_trellis_store_rows, "trellis_store_rows", trellis_store_rows_len, trellis_store_rows_data, "main", 6, sizeof(vk_trellis_io), {256, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_trellis_block, "trellis_block", trellis_block_len, trellis_block_data, "main", 1, sizeof(vk_trellis_transform), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_trellis_butterfly, "trellis_butterfly", trellis_butterfly_len, trellis_butterfly_data, "main", 1, sizeof(vk_trellis_transform), {256, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_trellis_quant, "trellis_quant", trellis_quant_len, trellis_quant_data, "main", 2, sizeof(vk_trellis_product), {64, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_trellis_cross, "trellis_cross", trellis_cross_len, trellis_cross_data, "main", 2, sizeof(vk_trellis_transform), {256, 1, 1}, {}, 1);
     for (uint32_t i = 0; i < 6; ++i) {
         ggml_vk_create_pipeline(device, device->pipeline_trellis_decode_rows[i], "trellis_decode_rows", trellis_decode_rows_len, trellis_decode_rows_data, "main", 5, sizeof(vk_trellis_io), {256, 1, 1}, {i + 1}, 1);
         ggml_vk_create_pipeline(device, device->pipeline_trellis_matvec[i], "trellis_matvec", trellis_matvec_len, trellis_matvec_data, "main", 4, sizeof(vk_trellis_product), {16, 1, 1}, {i + 1}, 1);
+#if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
+        if (device->integer_dot_product) {
+            ggml_vk_create_pipeline(device, device->pipeline_trellis_matvec_q8[i], "trellis_matvec_q8", trellis_matvec_q8_len, trellis_matvec_q8_data, "main", 4, sizeof(vk_trellis_product), {16, 1, 1}, {i + 1}, 1);
+        }
+#endif
         ggml_vk_create_pipeline(device, device->pipeline_trellis_matmul[i], "trellis_matmul", trellis_matmul_len, trellis_matmul_data, "main", 4, sizeof(vk_trellis_product), {16, 16, 1}, {i + 1}, 1);
 #if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
         if (device->coopmat_support && device->coopmat_support_16x16x16_f32acc && device->vulkan_memory_model && device->fp16) {
@@ -16104,7 +16110,8 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
     for (int i = 0; i < cgraph->n_nodes; ++i) {
         const ggml_tensor * node = cgraph->nodes[i];
         if ((node->op == GGML_OP_TRELLIS || node->op == GGML_OP_TRELLIS_GET_ROWS) && !ggml_is_empty(node)) {
-            trellis_scratch_size = std::max(trellis_scratch_size, 2 * ggml_vk_trellis_scratch_stride(ctx->device, node));
+            trellis_scratch_size = std::max(trellis_scratch_size, 2 * ggml_vk_trellis_scratch_stride(ctx->device, node) +
+                                                                  ggml_vk_trellis_quant_size(ctx->device, node));
         }
     }
     if (trellis_scratch_size > (ctx->trellis_scratch ? ctx->trellis_scratch->size : 0)) {

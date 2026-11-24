@@ -81,6 +81,16 @@ size_t ggml_vk_trellis_scratch_stride(const vk_device & device, const ggml_tenso
     return ggml_vk_align_size(width * batch * sizeof(float), device->properties.limits.minStorageBufferOffsetAlignment);
 }
 
+// int8 activations of trellis_matvec_q8 (trellis_quant.comp): per input 4 bytes of replicated values and, per
+// group of 4 inputs, 8 bytes of sum and scale, so 6 bytes per input and token
+static constexpr uint32_t VK_TRELLIS_Q8_TOKENS = 4;
+size_t ggml_vk_trellis_quant_size(const vk_device & device, const ggml_tensor * op) {
+    if (op->op != GGML_OP_TRELLIS || ggml_nrows(op) > VK_TRELLIS_Q8_TOKENS) {
+        return 0;
+    }
+    return ggml_vk_align_size(6 * size_t(op->src[0]->ne[0]) * ggml_nrows(op), device->properties.limits.minStorageBufferOffsetAlignment);
+}
+
 bool ggml_vk_trellis_supported(const vk_device & device, const ggml_tensor * op) {
     const bool rows = op->op == GGML_OP_TRELLIS_GET_ROWS;
     const ggml_tensor * w = op->src[0];
@@ -256,11 +266,28 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
             return opt && std::strcmp(opt, "1") == 0;
         }();
         auto & coopmat = ctx->device->pipeline_trellis_matmul_cm1[bits];
-        auto & product = batch >= 16 && coopmat_enabled && coopmat ? coopmat :
-                         batch <= 4 ? ctx->device->pipeline_trellis_matvec[bits] : ctx->device->pipeline_trellis_matmul[bits];
-        ggml_pipeline_request_descriptor_sets(ctx, product, 1);
-        ggml_vk_dispatch_pipeline(ctx, subctx, product, { w_buf, scale_buf, a, b },
-                                  vk_trellis_product{ k, n, batch, offset(scales) }, { n, batch, 1 });
+        // decode and verify batches: int8 activations and dot4 (GGML_VK_TRELLIS_Q8=0 keeps the float product)
+        static const bool q8_enabled = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_Q8"); return !opt || std::strcmp(opt, "0") != 0; }();
+        const size_t q8_size = ggml_vk_trellis_quant_size(ctx->device, op);
+        const bool use_q8 = q8_enabled && batch <= VK_TRELLIS_Q8_TOKENS && q8_size > 0 && ctx->device->pipeline_trellis_matvec_q8[bits] &&
+                            ctx->trellis_scratch->size >= 2 * stride + q8_size;
+        if (use_q8) {
+            vk_subbuffer c = { ctx->trellis_scratch, 2 * stride, q8_size };
+            auto & quant = ctx->device->pipeline_trellis_quant;
+            ggml_pipeline_request_descriptor_sets(ctx, quant, 1);
+            ggml_vk_dispatch_pipeline(ctx, subctx, quant, { a, c }, vk_trellis_product{ k, n, batch, 0 }, { k / 16, batch, 1 });
+            ggml_vk_sync_buffers(ctx, subctx);
+            auto & product = ctx->device->pipeline_trellis_matvec_q8[bits];
+            ggml_pipeline_request_descriptor_sets(ctx, product, 1);
+            ggml_vk_dispatch_pipeline(ctx, subctx, product, { w_buf, scale_buf, c, b },
+                                      vk_trellis_product{ k, n, batch, offset(scales) }, { n, batch, 1 });
+        } else {
+            auto & product = batch >= 16 && coopmat_enabled && coopmat ? coopmat :
+                             batch <= 4 ? ctx->device->pipeline_trellis_matvec[bits] : ctx->device->pipeline_trellis_matmul[bits];
+            ggml_pipeline_request_descriptor_sets(ctx, product, 1);
+            ggml_vk_dispatch_pipeline(ctx, subctx, product, { w_buf, scale_buf, a, b },
+                                      vk_trellis_product{ k, n, batch, offset(scales) }, { n, batch, 1 });
+        }
         ggml_vk_sync_buffers(ctx, subctx);
         ggml_vk_trellis_stamp(ctx, subctx, TRELLIS_PROFILE_PRODUCT);
         ggml_vk_trellis_side(ctx, subctx, b, a, n, batch, desc, desc + 7, desc[6], true);
