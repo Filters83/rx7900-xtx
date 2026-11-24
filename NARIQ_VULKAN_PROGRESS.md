@@ -5,7 +5,7 @@ Stato al 24 novembre 2026. Branch sperimentale `nariq-vulkan-rdna4`.
 ## Punto di partenza per chi riprende il lavoro
 
 - Il commit `1493ad894` contiene il decoder ottimizzato e il profiler per fase. La build di riferimento per le nuove prove è quella ottenuta da questo commit o da un suo discendente con gli stessi kernel.
-- Su questa macchina il binario ottimizzato è in `build/packaging-x64/bin`. La bozza GitHub con archivio `llama-nariq-vulkan-windows-x64-095f09b95.zip` contiene la build precedente. Per provare il decoder aggiornato da un nuovo checkout, seguire la sezione [Riproduzione delle prove](#riproduzione-delle-prove).
+- Su questa macchina il binario ottimizzato è in `build/packaging-x64/bin`. Nei pacchetti GitHub, `BUILD_INFO.txt` indica il commit usato per compilare. Per provare il decoder aggiornato da un nuovo checkout, seguire la sezione [Riproduzione delle prove](#riproduzione-delle-prove).
 - Baseline sulla RX 9070 con il GGUF 3.0 bpw e prefill cooperativo. 65/65 layer su Vulkan, cache Q4, 150,77 tok/s nel prefill da 256 token e 17,39 tok/s nella generazione da 32 token. Le variazioni vanno confrontate con la stessa configurazione e con una cattura dei logits.
 - Per decidere il passo successivo, vedere [Profiling degli operatori Trellis](#profiling-degli-operatori-trellis) e [Priorità di ottimizzazione](#priorità-di-ottimizzazione).
 
