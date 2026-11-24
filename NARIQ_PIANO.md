@@ -15,7 +15,7 @@ Riferimento: setup OpenClaw attuale, fork `d4b007d` con Unsloth UD-Q2_K_XL, DFla
 | Misura | Unsloth attuale | NariQ 24/11 | Traguardo minimo | Traguardo pieno |
 | --- | ---: | ---: | ---: | ---: |
 | Generazione senza bozza, llama-bench tg | ~39 t/s | 17,4 t/s (24,1 dopo A5a) | 30 | 39 |
-| Generazione con DFlash2, contesto breve | ~81 t/s | ~10 t/s | 55 | 75 |
+| Generazione con DFlash2, contesto breve | ~81 t/s | ~10 t/s (42 dopo B2, prompt ripetitivo) | 55 | 75 |
 | Generazione con DFlash2 a 65K | ~80 t/s | n/d | 50 | 70 |
 | Prefill a 32K | ~910 t/s | ~137 t/s | 450 | 800 |
 | VRAM di picco, OpenClaw completo | 14,1-14,5 GiB | n/d | ≤ 14,5 GiB | ≤ 14,5 GiB |
@@ -27,12 +27,14 @@ Il cambio in OpenClaw si propone all'utente quando sono raggiunti i traguardi mi
 
 Aggiornare questa sezione a ogni passaggio di consegne.
 
-- **Ultimo aggiornamento**: 24/11/2026 notte, Claude.
-- **Build di riferimento**: `build/ref-bin` = binari del commit `a66f18956` (A5a). La build precedente resta in `build/packaging-x64/bin` (`343fe2183`).
-- **Ultimo risultato**: A5a fatta, generazione 18,1 → 24,1 t/s (llama-bench tg64), prefill invariato 150 t/s.
+- **Ultimo aggiornamento**: 25/11/2026 notte, Claude.
+- **Build di riferimento**: `build/ref-bin` = binari del commit `3b8cc30e7` (B2). La build iniziale resta in `build/packaging-x64/bin` (`343fe2183`).
+- **Ultimi risultati**: A5a, generazione senza bozza 18,1 → 24,1 t/s. B2, prodotto a 4 token dimezzato. B1, sul server con DFlash2 a 3 token 42,2 t/s (prompt ripetitivo, accettazione 89%); con 4 token il batch diventa 5 e cade sul vecchio prodotto (17 t/s), quindi restare a 3.
+- **Problema aperto**: un ciclo di verifica (4 token più la bozza) costa ~87 ms contro ~42 ms di un token singolo; con Unsloth costa ~28 ms. Il prodotto a 4 token vale ~1,9 volte quello a 1 token, ma il resto del ciclo non è stato ancora misurato. Sospetti: le due teste di uscita Trellis da 248.320 righe (modello e bozza DFlash2, che la condivide) e le altre operazioni con 4 token.
 - **Scoperta chiave (A1)**: in generazione il prodotto Trellis (`trellis_matvec`) è il 90% del tempo: circa 52 ms su 57 per token. Tutto il resto (attenzione, strati ricorrenti, rotazioni, input/output) costa 5,2 ms. Del prodotto, circa 28 ms sono calcolo per decodificare i pesi (~14-15 istruzioni per peso) e circa 23 ms letture. Le rotazioni costano ~1-2 ms reali: il profilo per fase le gonfiava a 30 ms.
 - **In corso**: niente. Codice committato e compilabile.
-- **Prossimo passo**: B2 (prodotto int8 a più token: decodificare ogni peso una volta per tutti i token del batch fino a 4, oggi `trellis_matvec_q8` lancia ancora un gruppo per token), poi B1 (misura DFlash2). In parallelo possibile A5b/A5c sul kernel `trellis_matvec_q8` (leggerne l'ISA con `GGML_VK_PIPELINE_ISA=trellis_matvec_q8`).
+- **Prossimo passo**: B4 (profilo di un ciclo DFlash2: `GGML_VK_PERF_LOGGER=1` sul server con lo script di prova, separando grafo del modello a 4 token e grafi della bozza). Poi, secondo il profilo, A5b/A5c sul kernel `trellis_matvec_q8`/`q8x4` (ISA con `GGML_VK_PIPELINE_ISA=trellis_matvec_q8`).
+- **Script di prova del server**: lo scratchpad di Claude non è condiviso. Per una prova equivalente avviare `build\bin\llama-server.exe` con gli argomenti dell'esempio in `NARIQ_VULKAN_PROGRESS.md` più `--spec-type draft-dflash --spec-draft-model D:\Progetti\openclaw\models\qwen38-27b-dflash2\Qwen3.8-27B-DFlash2-Q4_K_M.gguf --spec-draft-device Vulkan0 --spec-draft-ngl 99 --spec-draft-type-k q4_0 --spec-draft-type-v q4_0 --spec-draft-n-max 3 --spec-accept rejection -bs --spec-draft-vocab 65536`, `-c 32768 -ub 512`, `GGML_VK_TRELLIS_COOPMAT=1`, e inviare a `/completion` un prompt di ~1500 token con `n_predict` 256; leggere `timings.predicted_per_second`, `draft_n`, `draft_n_accepted`.
 
 ## Regole di lavoro
 
@@ -114,8 +116,10 @@ Stato: `da fare`, `in corso (chi)`, `fatto`, `scartato`. Le stime di guadagno so
 
 | ID | Attività | Stato | Note |
 | --- | --- | --- | --- |
-| B1 | Misurare DFlash2 con 3 token anticipati su NariQ; profilo del prodotto a 4 colonne | da fare | Il 24/11 DFlash2 rallentava (10,5 contro 14,7 t/s) |
-| B2 | Prodotto a più colonne: decodificare ogni peso una volta per tutte le colonne | da fare | Con A5a ogni colonna in più costa un solo `dot4` per peso. Oggi `trellis_matvec` (batch ≤ 4) lancia un gruppo per token (`gl_WorkGroupID.y`) e decodifica i pesi una volta per token |
+| B1 | Misurare DFlash2 con 3 token anticipati su NariQ | fatto | Dopo B2: senza bozza 24,0, bozza 2/3/4 token 38,7 / 42,2 / 17,1 t/s (prompt ripetitivo). Ciclo ~87 ms |
+| B4 | Profilo di un ciclo DFlash2 (modello a 4 token, bozza, teste di uscita) | da fare | Serve per capire dove vanno ~45 ms oltre al token singolo |
+| B5 | Estendere il prodotto int8 a 5-8 token (bozza a 4-7) se il profilo lo giustifica | da fare | Oggi oltre 4 token si cade su `trellis_matmul` float |
+| B2 | Prodotto a più colonne: decodificare ogni peso una volta per tutte le colonne | fatto (`3b8cc30e7`) | 4 token: TRL3 407 → 216 µs; 1 token invariato grazie a una variante dedicata | Con A5a ogni colonna in più costa un solo `dot4` per peso. Oggi `trellis_matvec` (batch ≤ 4) lancia un gruppo per token (`gl_WorkGroupID.y`) e decodifica i pesi una volta per token |
 | B3 | Scegliere i token anticipati (2-4) in base ai tempi misurati | da fare | |
 
 ### Fase C: prefill
@@ -138,6 +142,9 @@ Stato: `da fare`, `in corso (chi)`, `fatto`, `scartato`. Le stime di guadagno so
 ## Registro delle prove
 
 Voci più recenti in alto. Formato: data, chi, commit o "non committato", cosa, numeri (riferimento → candidato), esito.
+
+- **25/11/2026 notte, Claude**: B1 sul server (`-c 32768 -ub 512`, cache q4_0, prompt sintetico ripetitivo da 1527 token, 256 token generati, `GGML_VK_TRELLIS_COOPMAT=1`): senza bozza 23,96 t/s; DFlash2 2 token 38,68 (accettati 168/176); 3 token 42,18 (186/210); 4 token 17,06 (197/232, batch 5 fuori dal percorso int8). Esito: usare 3 token; il ciclo costa ~87 ms, da profilare (B4).
+- **25/11/2026 notte, Claude**, `3b8cc30e7`: B2, un gruppo di lavoro per 16 uscite e tutti i token del batch (fino a 4), con variante a 1 token (`trellis_matvec_q8`) e fino a 4 (`trellis_matvec_q8x4`). Nuovi casi perf 5120 → 17408 a 1/2/3/4/16 token. µs per prodotto: TRL3 1 token 111,5 → 112,5, 4 token 407,3 → 215,9; TRL4 105,7 → 107,2 e 386,6 → 217,3. Una prima versione con un solo kernel per tutti i casi rallentava il token singolo dell'11% (124 µs). tg64 24,06, 416/416, ctest 4/4. Esito: accettato.
 
 - **24/11/2026 notte, Claude**, `a66f18956`: A5a, prodotto int8. Nuovi `trellis_quant.comp` (attivazioni int8 per gruppi di 16, valori replicati per lane + somma e scala) e `trellis_matvec_q8` in `trellis_product.comp`; usato per batch ≤ 4 se il dispositivo ha `integer_dot_product`, `GGML_VK_TRELLIS_Q8=0` torna al prodotto float. Terza area di scratch da 6 byte per input e token (`ggml_vk_trellis_quant_size`). tg64 18,08 → 24,12 t/s; pp512 invariato (150,5). Logits del modello completo, `test-trellis-model --ubatch 1 --predict 6` contro CPU: KL media 4,0e-5, massima 2,2e-4, top-1 31/31 (prodotto float: KL media 1,1e-8). Soglie `test-backend-ops` per t ≤ 4: prodotto e gruppo d'ingresso 5e-5 (misurato ~2e-5), MLP codificato 2e-4 (misurato fino a 8,8e-5); `test-trellis-vulkan*` girano con `GGML_VK_TRELLIS_Q8=0` (controlli elemento per elemento del formato). 416/416, ctest 4/4. Esito: accettato.
 
