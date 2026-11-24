@@ -3338,15 +3338,15 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                                         trellis_matmul_cm1_len, trellis_matmul_cm1_data, "main", 4, sizeof(vk_trellis_product),
                                         {16, 64, 1}, {i + 1, 4 * subgroup}, 1, false, true, subgroup);
             }
-            // 8 subgroups of 32 (trellis_matmul_cm.comp): 32 outputs and 128 tokens per workgroup
+            // 8 subgroups of 32 (trellis_matmul_cm.comp): 64 outputs and 128 tokens per workgroup
             if (device->subgroup_size_control && device->subgroup_min_size <= 32 && 32 <= device->subgroup_max_size &&
                 256 <= device->properties.limits.maxComputeWorkGroupInvocations) {
                 ggml_vk_create_pipeline(device, device->pipeline_trellis_mm_cm1[i], "trellis_mm_cm1",
                                         trellis_mm_cm1_len, trellis_mm_cm1_data, "main", 4, sizeof(vk_trellis_product),
-                                        {32, 1, 1}, {i + 1}, 1, false, true, 32);
+                                        {64, 1, 1}, {i + 1}, 1, false, true, 32);
                 ggml_vk_create_pipeline(device, device->pipeline_trellis_mm_res_cm1[i], "trellis_mm_res_cm1",
                                         trellis_mm_res_cm1_len, trellis_mm_res_cm1_data, "main", 4, sizeof(vk_trellis_product),
-                                        {32, 1, 1}, {i + 1}, 1, false, true, 32);
+                                        {64, 1, 1}, {i + 1}, 1, false, true, 32);
             }
         }
 #endif

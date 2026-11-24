@@ -324,8 +324,21 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
             auto & product = residual && ctx->device->pipeline_trellis_mm_res_cm1[bits] ? ctx->device->pipeline_trellis_mm_res_cm1[bits]
                                                                                         : ctx->device->pipeline_trellis_mm_cm1[bits];
             ggml_pipeline_request_descriptor_sets(ctx, product, 1);
+            // few outputs (the 48-row delta-net projections: 2 workgroups): split k as in the int8 product
+            const uint32_t groups = CEIL_DIV(n, 64), tiles = k / 16;
+            uint32_t splits = 1;
+            if (groups < 32) {
+                splits = std::min<uint32_t>({ 16, CEIL_DIV(64, groups), tiles / 16, uint32_t(stride / (sizeof(float) * n * batch)) });
+                splits = std::max<uint32_t>(splits, 1);
+            }
             ggml_vk_dispatch_pipeline(ctx, subctx, product, { w_buf, scale_buf, c, b },
-                                      vk_trellis_product{ k, n, batch, offset(scales) }, { n, 1, 1 });
+                                      vk_trellis_product{ k, n, batch, offset(scales) }, { n, splits, 1 });
+            if (splits > 1) {
+                ggml_vk_sync_buffers(ctx, subctx);
+                auto & reduce = ctx->device->pipeline_trellis_reduce;
+                ggml_pipeline_request_descriptor_sets(ctx, reduce, 1);
+                ggml_vk_dispatch_pipeline(ctx, subctx, reduce, { b }, vk_trellis_product{ splits, n, batch, 0 }, { n * batch, 1, 1 });
+            }
         } else {
             auto & product = batch >= 16 && coopmat_enabled && coopmat ? coopmat :
                              batch <= 4 ? ctx->device->pipeline_trellis_matvec[bits] : ctx->device->pipeline_trellis_matmul[bits];
