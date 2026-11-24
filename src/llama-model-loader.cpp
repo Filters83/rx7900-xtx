@@ -722,17 +722,16 @@ llama_model_loader::llama_model_loader(
     n_tensors = weights_map.size();
 
     const int version_key = gguf_find_key(metadata, "trellis.version");
-    bool has_coded_tensors = false;
     for (const auto & item : weights_map) {
-        has_coded_tensors |= ggml_is_trellis_type(item.second.tensor->type);
+        has_trellis |= ggml_is_trellis_type(item.second.tensor->type);
     }
-    if (has_coded_tensors || version_key >= 0) {
+    if (has_trellis || version_key >= 0) {
         if (version_key < 0 || gguf_get_kv_type(metadata, version_key) != GGUF_TYPE_UINT32 ||
             gguf_get_val_u32(metadata, version_key) != 1) {
             throw std::runtime_error("trellis: coded tensors require trellis.version = 1 (uint32)");
         }
     }
-    if (has_coded_tensors && gguf_find_key(metadata, "prism.hadamard.version") >= 0) {
+    if (has_trellis && gguf_find_key(metadata, "prism.hadamard.version") >= 0) {
         throw std::runtime_error("trellis: models with Prism Hadamard-folded weights are unsupported");
     }
 
@@ -1333,14 +1332,14 @@ struct ggml_tensor * llama_model_loader::create_tensor(
             if (!buft) {
                 throw std::runtime_error(format("failed to find a compatible buffer type for tensor %s", tn.str().c_str()));
             }
-            // trellis fork: say once per load when a backend/device cannot run the coded linears; the
-            // coded embedding always stays in host memory, so it does not count
+            // Report a fallback when a coded weight was assigned to a GPU layer.
             ggml_backend_dev_t gpu = buft_list->front().first;
-            if (op == GGML_OP_MUL_MAT && ggml_is_trellis_type(t_meta->type) && !trellis_gpu_warned && gpu != nullptr &&
-                    ggml_backend_dev_type(gpu) == GGML_BACKEND_DEVICE_TYPE_GPU && ggml_backend_buft_get_device(buft) != gpu) {
+            if ((op == GGML_OP_MUL_MAT || op == GGML_OP_GET_ROWS) && ggml_is_trellis_type(t_meta->type) && !trellis_gpu_warned && gpu != nullptr &&
+                    ggml_backend_dev_type(gpu) == GGML_BACKEND_DEVICE_TYPE_GPU &&
+                    (ggml_backend_buft_get_device(buft) != gpu || ggml_backend_buft_is_host(buft))) {
                 trellis_gpu_warned = true;
-                LLAMA_LOG_WARN("trellis: %s (%s) cannot run the coded linears on this backend/device; they run on the CPU, which is much slower\n",
-                        ggml_backend_dev_name(gpu), ggml_backend_dev_description(gpu));
+                LLAMA_LOG_WARN("trellis: %s cannot use %s for %s; using %s\n",
+                        ggml_backend_dev_name(gpu), ggml_op_name(op), ggml_get_name(t_meta), ggml_backend_buft_name(buft));
             }
         }
 
@@ -1875,12 +1874,12 @@ bool llama_model_loader::load_all_data(
 }
 
 std::string llama_model_loader::ftype_name() const {
-    return llama_ftype_name(ftype);
+    return has_trellis ? "NariQ Trellis" : llama_ftype_name(ftype);
 }
 
 void llama_model_loader::print_info() const {
     LLAMA_LOG_INFO("%s: file format = %s\n", __func__, llama_file_version_name(fver));
-    LLAMA_LOG_INFO("%s: file type   = %s\n", __func__, llama_ftype_name(ftype));
+    LLAMA_LOG_INFO("%s: file type   = %s\n", __func__, ftype_name().c_str());
     if (n_bytes < GiB) {
         LLAMA_LOG_INFO("%s: file size   = %.2f MiB (%.2f BPW) \n", __func__, n_bytes/1024.0/1024.0,        n_bytes*8.0/n_elements);
     } else {
