@@ -12250,6 +12250,11 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
             test_cases.emplace_back(new test_trellis(type, 5120, 17408, t, {1, 1024, 1}, {1, 128, 1}));
         }
     }
+    // the 48-row delta-net projections and one band of the output head (5120 -> 15488)
+    for (int64_t t : {1, 4}) {
+        test_cases.emplace_back(new test_trellis(GGML_TYPE_TRL5, 5120, 48, t, {0, 0, 1}, {1, 128, 1}));
+        test_cases.emplace_back(new test_trellis(GGML_TYPE_TRL2, 5120, 15488, t, {1, 128, 1}, {1, 128, 1}));
+    }
 
     // SWIGLU at a 27B-class FFN width, fused [gate|up] vs split operands
     // note: same bytes either way, so a backend that indexes them differently shows it here

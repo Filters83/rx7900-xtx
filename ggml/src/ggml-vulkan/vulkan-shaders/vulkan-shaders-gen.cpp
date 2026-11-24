@@ -855,6 +855,7 @@ void process_shaders() {
     string_to_spv("trellis_matvec_q8x4", "trellis_product.comp", {{"TRELLIS_MATVEC_Q8", "1"}, {"TRELLIS_Q8_TOKENS", "4"}});
 #endif
     string_to_spv("trellis_quant", "trellis_quant.comp", {});
+    string_to_spv("trellis_reduce", "trellis_reduce.comp", {});
     string_to_spv("trellis_matmul", "trellis_product.comp", {});
 #if defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
     string_to_spv("trellis_matmul", "trellis_product.comp", {{"TRELLIS_COOPMAT", "1"}}, true, true);

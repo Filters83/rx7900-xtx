@@ -3316,6 +3316,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     ggml_vk_create_pipeline(device, device->pipeline_trellis_store_rows, "trellis_store_rows", trellis_store_rows_len, trellis_store_rows_data, "main", 6, sizeof(vk_trellis_io), {256, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_trellis_block, "trellis_block", trellis_block_len, trellis_block_data, "main", 1, sizeof(vk_trellis_transform), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_trellis_butterfly, "trellis_butterfly", trellis_butterfly_len, trellis_butterfly_data, "main", 1, sizeof(vk_trellis_transform), {256, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_trellis_reduce, "trellis_reduce", trellis_reduce_len, trellis_reduce_data, "main", 1, sizeof(vk_trellis_product), {64, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_trellis_quant, "trellis_quant", trellis_quant_len, trellis_quant_data, "main", 2, sizeof(vk_trellis_product), {64, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_trellis_cross, "trellis_cross", trellis_cross_len, trellis_cross_data, "main", 2, sizeof(vk_trellis_transform), {256, 1, 1}, {}, 1);
     for (uint32_t i = 0; i < 6; ++i) {
@@ -18629,6 +18630,12 @@ std::string vk_perf_logger::get_node_fusion_name(const ggml_tensor * node, const
     }
     if (node->op == GGML_OP_UNARY) {
         return fusion_str + ggml_unary_op_name(ggml_get_unary_op(node));
+    }
+    if (node->op == GGML_OP_TRELLIS || node->op == GGML_OP_TRELLIS_GET_ROWS) {
+        // Trellis products: type, inputs, outputs and tokens (output head, projections and batch sizes apart)
+        return fusion_str + ggml_op_name(node->op) + " " + ggml_type_name(node->src[0]->type) +
+               " k=" + std::to_string(node->src[0]->ne[0]) + " n=" + std::to_string(node->src[0]->ne[1]) +
+               " t=" + std::to_string(ggml_nrows(node));
     }
     if (node->op == GGML_OP_MUL_MAT || node->op == GGML_OP_MUL_MAT_ID) {
         const uint64_t m     = node->ne[0];
