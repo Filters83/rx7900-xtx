@@ -27,14 +27,20 @@ layout(push_constant) uniform Parameters {
 } p;
 
 #if defined(TRELLIS_MATVEC_Q8)
-// One token per workgroup and 16 outputs, as trellis_matvec, on the int8 activations of trellis_quant.comp: each
-// weight costs one dot4 of its four 6-bit bytes with the replicated input instead of a decode to float and an FMA.
-// The value of a state is the byte sum minus 126; the -126 goes in once per tile through the sum of the inputs.
+// 16 outputs per workgroup for all tokens of the batch (up to MAX_TOKENS, decode and speculative verify), on the
+// int8 activations of trellis_quant.comp. Each weight is decoded to its four 6-bit bytes once and costs one dot4
+// per token with the replicated input, instead of a decode to float and an FMA per token. The value of a state is
+// the byte sum minus 126; the -126 goes in once per tile and token through the sum of the inputs.
+// Two variants: one token (decode; a 4-token body costs it ~10% in registers) and up to 4 tokens.
+#ifndef TRELLIS_Q8_TOKENS
+#define TRELLIS_Q8_TOKENS 4
+#endif
+const uint MAX_TOKENS = TRELLIS_Q8_TOKENS;
 layout(local_size_x = 128) in;
 layout(binding = 2) readonly buffer Reps { uvec4 reps[]; };
 layout(binding = 2) readonly buffer Meta { uvec2 qmeta[]; };
-shared float partial_lo[128];
-shared float partial_hi[128];
+shared float partial_lo[MAX_TOKENS * 128];
+shared float partial_hi[MAX_TOKENS * 128];
 
 void main() {
     const uint thread_id = gl_LocalInvocationID.x;
@@ -42,42 +48,58 @@ void main() {
     const uint split = thread_id / 32;
     const uint tile_k = p.k / 16;
     const uint tile_base = gl_WorkGroupID.x * tile_k;
-    const uint token = gl_WorkGroupID.y;
     const uint meta_base = p.batch * tile_k * 8;
-    float sum_lo = 0.0;
-    float sum_hi = 0.0;
+    float sum_lo[MAX_TOKENS];
+    float sum_hi[MAX_TOKENS];
+    [[unroll]] for (uint t = 0; t < MAX_TOKENS; ++t) {
+        sum_lo[t] = 0.0;
+        sum_hi[t] = 0.0;
+    }
     for (uint tile_col = split; tile_col < tile_k; tile_col += 4) {
         const uint tile = (tile_base + tile_col) * TILE_WORDS;
         const float scale = float(scales[p.scale_offset + tile_col]);
-        const uint index = (token * tile_k + tile_col) * 4 + lane % 4;
-        const uvec4 a = reps[index];
-        const uvec2 meta = qmeta[meta_base + index];
         const uvec4 s_lo = trellis_states4(tile, 8 * lane);
         const uvec4 s_hi = trellis_states4(tile, 8 * lane + 4);
-        int acc_lo = 0;
-        int acc_hi = 0;
+        uvec4 b_lo, b_hi;
         [[unroll]] for (uint j = 0; j < 4; ++j) {
-            acc_lo += dotPacked4x8EXT(int(trellis_bytes(s_lo[j])), int(a[j]));
-            acc_hi += dotPacked4x8EXT(int(trellis_bytes(s_hi[j])), int(a[j]));
+            b_lo[j] = trellis_bytes(s_lo[j]);
+            b_hi[j] = trellis_bytes(s_hi[j]);
         }
-        const int bias = 126 * int(meta.x);
-        const float f = scale * uintBitsToFloat(meta.y);
-        sum_lo = fma(float(acc_lo - bias), f, sum_lo);
-        sum_hi = fma(float(acc_hi - bias), f, sum_hi);
+        [[unroll]] for (uint t = 0; t < MAX_TOKENS; ++t) {
+            if (t < p.batch) {
+                const uint index = (t * tile_k + tile_col) * 4 + lane % 4;
+                const uvec4 a = reps[index];
+                const uvec2 meta = qmeta[meta_base + index];
+                int acc_lo = 0;
+                int acc_hi = 0;
+                [[unroll]] for (uint j = 0; j < 4; ++j) {
+                    acc_lo += dotPacked4x8EXT(int(b_lo[j]), int(a[j]));
+                    acc_hi += dotPacked4x8EXT(int(b_hi[j]), int(a[j]));
+                }
+                const int bias = 126 * int(meta.x);
+                const float f = scale * uintBitsToFloat(meta.y);
+                sum_lo[t] = fma(float(acc_lo - bias), f, sum_lo[t]);
+                sum_hi[t] = fma(float(acc_hi - bias), f, sum_hi[t]);
+            }
+        }
     }
-    partial_lo[thread_id] = sum_lo;
-    partial_hi[thread_id] = sum_hi;
+    [[unroll]] for (uint t = 0; t < MAX_TOKENS; ++t) {
+        partial_lo[t * 128 + thread_id] = sum_lo[t];
+        partial_hi[t * 128 + thread_id] = sum_hi[t];
+    }
     barrier();
-    if (thread_id < 16) {
-        const uint row = 4 * (thread_id % 8);
+    const uint token = thread_id / 16;
+    const uint row_out = thread_id % 16;
+    if (token < p.batch) {
+        const uint row = 4 * (row_out % 8);
         float sum = 0.0;
         [[unroll]] for (uint j = 0; j < 4; ++j) {
             [[unroll]] for (uint c = 0; c < 4; ++c) {
-                const uint i = 32 * j + row + c;
-                sum += thread_id < 8 ? partial_lo[i] : partial_hi[i];
+                const uint i = token * 128 + 32 * j + row + c;
+                sum += row_out < 8 ? partial_lo[i] : partial_hi[i];
             }
         }
-        y[token * p.n + 16 * gl_WorkGroupID.x + thread_id] = sum;
+        y[token * p.n + 16 * gl_WorkGroupID.x + row_out] = sum;
     }
 }
 #elif defined(TRELLIS_MATVEC)

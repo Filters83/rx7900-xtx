@@ -12243,6 +12243,14 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
 static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     std::vector<std::unique_ptr<test_case>> test_cases;
 
+    // Trellis products at the Qwen3.8-27B NariQ FFN shape (5120 -> 17408, Hadamard blocks of 128 in and 1024 out)
+    // for decode, speculative verify and a small batch
+    for (ggml_type type : {GGML_TYPE_TRL3, GGML_TYPE_TRL4}) {
+        for (int64_t t : {1, 2, 3, 4, 16}) {
+            test_cases.emplace_back(new test_trellis(type, 5120, 17408, t, {1, 1024, 1}, {1, 128, 1}));
+        }
+    }
+
     // SWIGLU at a 27B-class FFN width, fused [gate|up] vs split operands
     // note: same bytes either way, so a backend that indexes them differently shows it here
     for (ggml_type type : {GGML_TYPE_F16, GGML_TYPE_F32}) {

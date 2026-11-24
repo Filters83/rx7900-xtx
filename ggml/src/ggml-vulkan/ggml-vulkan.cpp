@@ -3324,6 +3324,7 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
 #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
         if (device->integer_dot_product) {
             ggml_vk_create_pipeline(device, device->pipeline_trellis_matvec_q8[i], "trellis_matvec_q8", trellis_matvec_q8_len, trellis_matvec_q8_data, "main", 4, sizeof(vk_trellis_product), {16, 1, 1}, {i + 1}, 1);
+            ggml_vk_create_pipeline(device, device->pipeline_trellis_matvec_q8x4[i], "trellis_matvec_q8x4", trellis_matvec_q8x4_len, trellis_matvec_q8x4_data, "main", 4, sizeof(vk_trellis_product), {16, 1, 1}, {i + 1}, 1);
         }
 #endif
         ggml_vk_create_pipeline(device, device->pipeline_trellis_matmul[i], "trellis_matmul", trellis_matmul_len, trellis_matmul_data, "main", 4, sizeof(vk_trellis_product), {16, 16, 1}, {i + 1}, 1);
