@@ -103,7 +103,12 @@ void main() {
             reps[index] = uvec4(uint(c0 & 0xff) * 0x01010101u, uint(c1 & 0xff) * 0x01010101u,
                                 uint(c2 & 0xff) * 0x01010101u, uint(c3 & 0xff) * 0x01010101u);
 #endif
+#ifdef TRELLIS_Q8_PACKED
             qmeta[meta_base + index] = uvec2(uint(c0 + c1 + c2 + c3), floatBitsToUint(d));
+#else
+            // the replicated layout feeds trellis_matvec_q8, which takes 504 x the sum (4 x the -126 of the values)
+            qmeta[meta_base + index] = uvec2(uint(504 * (c0 + c1 + c2 + c3)), floatBitsToUint(d));
+#endif
         }
     }
 #elif defined(TRELLIS_FUSED_IN)

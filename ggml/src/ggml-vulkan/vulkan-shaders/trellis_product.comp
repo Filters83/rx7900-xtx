@@ -90,10 +90,12 @@ void main() {
         const uint b_lo = trellis_pack_weights(s_lo);
         const uint b_hi = trellis_pack_weights(s_hi);
 #else
+        // the four 6-bit bytes of each state times 4 (no shift, as grid_value4 in nari-labs/nari-llama.cpp#7): the
+        // dot products below give 4 x (value + 126) per weight, which the bias and the factor 1/4 undo
         uvec4 b_lo, b_hi;
         [[unroll]] for (uint j = 0; j < 4; ++j) {
-            b_lo[j] = trellis_bytes(s_lo[j]);
-            b_hi[j] = trellis_bytes(s_hi[j]);
+            b_lo[j] = trellis_bytes4(s_lo[j]);
+            b_hi[j] = trellis_bytes4(s_hi[j]);
         }
 #endif
         [[unroll]] for (uint t = 0; t < MAX_TOKENS; ++t) {
@@ -104,17 +106,20 @@ void main() {
                 const int a = int(packed[index]);
                 const int acc_lo = dotPacked4x8EXT(a, b_lo);
                 const int acc_hi = dotPacked4x8EXT(a, b_hi);
+                const int bias = 126 * int(meta.x);
+                const float f = scale * uintBitsToFloat(meta.y);
 #else
                 const uvec4 a = reps[index];
+                // chained through the accumulator of the dot product (no separate adds); no overflow: |sum| < 2^20
                 int acc_lo = 0;
                 int acc_hi = 0;
                 [[unroll]] for (uint j = 0; j < 4; ++j) {
-                    acc_lo += dotPacked4x8EXT(int(b_lo[j]), int(a[j]));
-                    acc_hi += dotPacked4x8EXT(int(b_hi[j]), int(a[j]));
+                    acc_lo = dotPacked4x8AccSatEXT(int(a[j]), b_lo[j], acc_lo);
+                    acc_hi = dotPacked4x8AccSatEXT(int(a[j]), b_hi[j], acc_hi);
                 }
+                const int bias = int(meta.x);
+                const float f = 0.25 * scale * uintBitsToFloat(meta.y);
 #endif
-                const int bias = 126 * int(meta.x);
-                const float f = scale * uintBitsToFloat(meta.y);
                 sum_lo[t] = fma(float(acc_lo - bias), f, sum_lo[t]);
                 sum_hi[t] = fma(float(acc_hi - bias), f, sum_hi[t]);
             }
