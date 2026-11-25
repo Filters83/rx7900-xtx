@@ -162,6 +162,18 @@ Stato: `da fare`, `in corso (chi)`, `fatto`, `scartato`. Le stime di guadagno so
 | D2 | Confronto completo con `tools\Run-Qwen38-VulkanAB.ps1` e VRAM di picco con il contesto di produzione | fatto (25/11) | Vedi "Stato attuale" e il registro |
 | D3 | Sessione reale di Jarvis e analisi del log | da fare | |
 
+### Fase F: dopo C8 (ordine concordato con l'utente il 25/11)
+
+Priorità: prima la generazione, poi il prefill. TurboQuant/Turbo3, contesti 128K-256K e riduzione della VRAM sono rimandati. Non servono le opzioni dei kernel standard (tile XL `GGML_VK_AMD_PROP_XL`, split-K, RM): i prodotti Trellis non le usano.
+
+| ID | Attività | Stato | Note |
+| --- | --- | --- | --- |
+| F1 | Profilo C8 con tutte le opzioni attive: ciclo DFlash2 a 3 token a contesto breve e a 32K, prefill a 32K. Ripartizione fra Trellis 1 / 4 token, attenzione (percorsi FA del fork), delta-net, bozza e testa della bozza | in corso (Claude) | Solo misure |
+| F2 | Senza codice: `--spec-draft-n-max` 4-5 e `--spec-draft-p-min` con n-max 3 | da fare | Oltre 4 token la verifica oggi cade sul prodotto float |
+| F3 | B5: verifica WMMA int8 estesa a 5-8 token | da fare | La WMMA riempie già fino a 16 token |
+| F4 | In base al profilo: testa di uscita della bozza o decodifica a 1 token | da fare | |
+| F5 | Prefill: scritture LDS a 32 bit per coppie FP16 con conversione "magic bias" (somma dei byte OR 0x6400 in FP16, una sottrazione impacchettata per due pesi), poi passo K a 4 tile | da fare | |
+
 ### Fase E: alternative
 
 | ID | Attività | Stato | Note |
