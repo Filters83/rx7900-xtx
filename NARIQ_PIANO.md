@@ -12,14 +12,14 @@ Motivo: secondo il rapporto tecnico di Nari Labs (arXiv 2611.26157, tabella 3), 
 
 Riferimento: setup OpenClaw attuale, fork `d4b007d` con Unsloth UD-Q2_K_XL, DFlash2 3 token, cache q4_0, contesto 114688, ubatch 512.
 
-| Misura | Unsloth attuale | NariQ 24/11 | Traguardo minimo | Traguardo pieno |
+| Misura | Unsloth attuale | NariQ B6, 25/11 | Traguardo minimo | Traguardo pieno |
 | --- | ---: | ---: | ---: | ---: |
-| Generazione senza bozza, llama-bench tg | ~39 t/s | 17,4 t/s (24,9 al 25/11) | 30 | 39 |
-| Generazione con DFlash2, contesto breve | ~81 t/s (87 il 25/11) | ~10 t/s (25,4 al 25/11 in D2; ~41 su prompt ripetitivo) | 55 | 75 |
-| Generazione con DFlash2 a 65K | ~80 t/s (78 il 25/11) | 25,6 t/s al 25/11 (D2) | 50 | 70 |
-| Prefill a 32K | ~910 t/s (llama-bench d32768: 766) | ~137 t/s (472 al 25/11, llama-bench d32768) | 450 | 800 |
-| VRAM di picco, OpenClaw completo | 14,1-14,5 GiB | 14,96 GiB con DFlash2 al 25/11 (D2) | ≤ 14,5 GiB | ≤ 14,5 GiB |
-| Qualità | | | logits Vulkan = CPU (top-1 31/31, KL < 1e-6) | idem |
+| Generazione senza bozza, llama-bench tg | ~39 t/s | ~25 t/s (B2) | 30 | 39 |
+| Generazione con DFlash2, contesto breve | 87 t/s (D2, confronto precedente) | 37,23 t/s (D2) | 55 | 75 |
+| Generazione con DFlash2 a 65K | 78 t/s (D2, confronto precedente) | 39,90 t/s (D2) | 50 | 70 |
+| Prefill a 32K | ~910 t/s (llama-bench d32768: 766) | 471 t/s (B3, 512 token con prefisso in cache) | 450 | 800 |
+| VRAM di picco, OpenClaw completo | 14,1-14,5 GiB | 13,65 GiB D2 testuale con DFlash2. Profilo completo da verificare. | ≤ 14,5 GiB | ≤ 14,5 GiB |
+| Qualità | | Logits identici al dot4. CPU 31/31 top-1, KL max 2,10e-4. | CPU top-1 31/31, KL < 1e-6 | idem |
 
 Il cambio in OpenClaw si propone all'utente quando sono raggiunti i traguardi minimi. Decide l'utente.
 
@@ -27,17 +27,18 @@ Il cambio in OpenClaw si propone all'utente quando sono raggiunti i traguardi mi
 
 Aggiornare questa sezione a ogni passaggio di consegne.
 
-- **Ultimo aggiornamento**: 25/11/2026, Codex (A5b, riuso delle parole nel kernel da un token).
-- **Build di riferimento**: `build/ref-bin` = build A5b, verificabile con `llama-server --version`. B6 compatto resta opt-in con `GGML_VK_TRELLIS_Q8_PACKED=1`. Riferimenti precedenti in `build/a5b/ref-before-a5b` (`522f29491`), `build/b6/ref-before-b6` (`71b71362e`) e `build/packaging-x64/bin` (`343fe2183`).
-- **Confronto completo in stile OpenClaw (D2, 25/11)**: `D:\Progetti\openclaw\tools\Run-Qwen38-VulkanAB.ps1 -Backends nariq-dflash3r,fork-dflash3r` con `OPENCLAW_AB_UB=512` (varianti `nariq` e `nariq-dflash3r` aggiunte allo script; la build NariQ si cambia con `OPENCLAW_AB_NARIQDIR`). Report `D:\Progetti\openclaw\runtime\benchmarks\20261124-212542-qwen38-backend-ab`. NariQ con DFlash2 3 token: generazione 25,4 / 23,9 / 25,6 t/s (breve / 32K / 65K), prefill 522 / 432, accettazione 35-44%, ciclo 84-90 ms, picco VRAM 14,96 GiB. Unsloth sul fork di produzione: 87,0 / 90,0 / 78,3, prefill 911 / 661, accettazione 44-55%, ciclo 27-32 ms, 14,06 GiB. **Con NariQ DFlash2 oggi non rende**: un ciclo costa circa il doppio di un token (~41 ms) e produce ~2,1 token, quindi la generazione resta ~25 t/s come senza bozza. Senza bozza si risparmia anche ~1,3 GiB di VRAM.
+- **Ultimo aggiornamento**. 25/11/2026, Codex, B6 WMMA INT8 con somme equivalenti al dot4.
+- **Build di riferimento**. `build/ref-bin` contiene B6 WMMA verificata con `llama-server --version`. Per abilitarla impostare `GGML_VK_TRELLIS_Q8_PACKED=1` e `GGML_VK_TRELLIS_VERIFY_CM=1`. La build A5b è archiviata in `build/b6-cm/ref-before-wmma` (commit `92e2b6c0a`).
+- **Confronto iniziale in stile OpenClaw (D2, 25/11)**: `D:\Progetti\openclaw\tools\Run-Qwen38-VulkanAB.ps1 -Backends nariq-dflash3r,fork-dflash3r` con `OPENCLAW_AB_UB=512` (varianti `nariq` e `nariq-dflash3r` aggiunte allo script; la build NariQ si cambia con `OPENCLAW_AB_NARIQDIR`). Report `D:\Progetti\openclaw\runtime\benchmarks\20261124-212542-qwen38-backend-ab`. NariQ con DFlash2 3 token: generazione 25,4 / 23,9 / 25,6 t/s (breve / 32K / 65K), prefill 522 / 432, accettazione 35-44%, ciclo 84-90 ms, picco VRAM 14,96 GiB. Unsloth sul fork di produzione: 87,0 / 90,0 / 78,3, prefill 911 / 661, accettazione 44-55%, ciclo 27-32 ms, 14,06 GiB. **Su quella build NariQ DFlash2 rendeva poco**: un ciclo costa circa il doppio di un token (~41 ms) e produce ~2,1 token, quindi la generazione resta ~25 t/s come senza bozza. Senza bozza si risparmia anche ~1,3 GiB di VRAM.
 - **Dove sta il margine in generazione**: (1) il prodotto a 4 token (verifica) costa ~1,9 volte quello a 1 token: se scendesse a ~1,2 volte, con l'accettazione misurata DFlash2 darebbe ~40 t/s; (2) il prodotto a 1 token (~36 ms per token) limitato dal calcolo della decodifica (vedi "Valutazione onesta"). Entrambi dipendono dal costo della decodifica per peso, per questo la valutazione HIP (E1) è utile.
 - **Ultimi risultati**: generazione senza bozza 17,5 → 24,9 t/s; con DFlash2 a 3 token ~41 t/s sul prompt ripetitivo di prova (prima ~10). **Prefill (C3) 150 → ~602 t/s a contesto vuoto, 147 → 472 a 32K** (llama-bench): traguardo minimo del prefill raggiunto. Il percorso cooperativo è ora predefinito (`GGML_VK_TRELLIS_COOPMAT=0` per disattivarlo): non serve più impostare la variabile.
 - **Riferimento NVIDIA**: Nari Labs dichiara 88,9 t/s a 4K e 70,7 a 64K su una RTX PRO 6000 (Blackwell, ~1,8 TB/s, circa 2,8 volte la banda della RX 9070), senza speculazione, cache KV BF16. In proporzione alla banda equivarrebbero a ~32 t/s qui. Il GGUF pubblicato non contiene il modulo MTP ("non ancora quantizzato"), quindi MTP non è disponibile; le alternative alla bozza DFlash2 sono `ngram-simple` (nessun modello, utile su testo ripetitivo e codice) o nessuna speculazione.
 - **Profilo di un ciclo DFlash2 (B4)**: il ciclo (~83 ms) è dominato dai prodotti Trellis a 4 token del modello (il prodotto a 4 token costa ~1,9 volte quello a 1 token: la decodifica di ogni peso, ~7 istruzioni, si fa una volta, ma ogni token aggiunge un `dot4` per peso e due letture per tile). La bozza costa ~10 ms per ciclo, ~6 nelle bande della testa di uscita Trellis condivisa (normali: 5120 → 15488 a 4 token 197 µs). Le proiezioni da 48 righe erano anomale (corrette in `7a5cae586`).
-- **Valutazione onesta**: la decodifica Trellis costa ~7 istruzioni per peso su RDNA (una moltiplicazione intera a 32 bit, a un quarto di velocità, più estrazioni di bit), contro ~1-2 per i formati IQ/K di Unsloth. Il limite stimato in generazione è ~28-30 t/s senza bozza e ~45-50 con DFlash2 su testo ripetitivo; la parità con Unsloth (39 / ~80) non sembra raggiungibile con questo formato su questa scheda. Ho provato a evitare la moltiplicazione con due prodotti a 24 bit: il compilatore li ricompone in una moltiplicazione a 32 bit, e una versione che non si ricompone costa le stesse istruzioni.
+- **Stima del decoder precedente a B6**: la decodifica Trellis costa ~7 istruzioni per peso su RDNA (una moltiplicazione intera a 32 bit, a un quarto di velocità, più estrazioni di bit), contro ~1-2 per i formati IQ/K di Unsloth. Il limite stimato in generazione è ~28-30 t/s senza bozza e ~45-50 con DFlash2 su testo ripetitivo; la parità con Unsloth (39 / ~80) non sembra raggiungibile con questo formato su questa scheda. Ho provato a evitare la moltiplicazione con due prodotti a 24 bit: il compilatore li ricompone in una moltiplicazione a 32 bit, e una versione che non si ricompone costa le stesse istruzioni.
 - **Prefill e OpenClaw**: a 472 t/s un prompt da 32K richiede ~68 s (Unsloth ~40 s, prima ~3,5 minuti).
 - **Scoperta chiave (A1)**: in generazione il prodotto Trellis (`trellis_matvec`) è il 90% del tempo: circa 52 ms su 57 per token. Tutto il resto (attenzione, strati ricorrenti, rotazioni, input/output) costa 5,2 ms. Del prodotto, circa 28 ms sono calcolo per decodificare i pesi (~14-15 istruzioni per peso) e circa 23 ms letture. Le rotazioni costano ~1-2 ms reali: il profilo per fase le gonfiava a 30 ms.
 - **B6, idea 1 validata**: `GGML_VK_TRELLIS_Q8_PACKED=1` attiva il dot4 misto compatto a 2–4 token su dispositivi con accelerazione packed unsigned e mista. Un token usa il kernel originale. TRL3 a 4 token 217,93 → 191,84 µs, rapporto 4/1 da 1,81 a 1,61. TRL4 210,11 → 196,82 µs. `tg64` 24,98 → 24,96 t/s. DFlash2 B1 44,00 → 48,38 e D2 26,44/28,42/28,46 → 29,17/31,77/30,66 t/s (breve/32K/65K), stesso testo e stessa accettazione. ISA AMD, 416/416 Vulkan, CTest 4/4 e logits identici al percorso precedente. Il traguardo 1,3 resta aperto. HIP chiuso.
+- **B6, idea 2 validata**. WMMA INT8 16×16×16 su RX 9070 con driver AMD 26.11.2, opt-in per batch da 2–4 token. A 4 token TRL3 195,03 → 147,65 µs (-24,3%) e TRL4 190,34 → 146,97 µs (-22,8%), rapporti 4/1 1,35 e 1,38. B1 51,31 → 65,13 t/s e D2 29,02/31,89/31,31 → 37,23/40,32/39,90 t/s (breve/32K/65K), stessi hash del testo e stessa accettazione. D2 testuale con 13,65 GiB dedicati e 0,10 condivisi di picco. Vulkan 416/416, CTest 4/4, logits bit identici al dot4, CPU top-1 31/31 e KL max 2,10e-4. Restano aperti 1,3 nel microbenchmark e le soglie finali OpenClaw.
 - **A5b conclusa**: due letture dirette condivise fra gli otto stati della stessa lane per TRL1–4, solo sul kernel da un token. Microbenchmark TRL3 120,43 → 118,75 µs. `tg64` 24,04 → 24,25 t/s nel breve e 21,37 → 21,36 a 32K. Vulkan 416/416, CTest 4/4 e logits identici a B6. Accettata come modifica piccola e numericamente esatta, senza nuove pipeline. Prototipi shuffle archiviati in `build/a5b`.
 - **B6, analisi di partenza (Claude, solo lettura del codice)**: in `trellis_matvec_q8x4` (`trellis_product.comp`, ramo `TRELLIS_MATVEC_Q8`) ogni peso costa, per ogni token, un `dot4` dei suoi 4 byte da 6 bit con l'attivazione replicata 4 volte; ogni lane legge per token e tile un `uvec4` di `reps` più un `uvec2` di `qmeta` (24 byte, uguali per le 8 lane con lo stesso `lane % 4`). A 4 token: 16 `dot4` ogni 4 pesi più 96 byte di letture per lane e tile. Idee in ordine:
   1. **Valore del peso in un byte**: la somma dei 4 byte da 6 bit va da 0 a 252, quindi sta in un byte senza segno. Calcolarla una volta per peso (`dotPacked4x8EXT` senza segno con `0x01010101`, una sola istruzione `v_dot4_u32_u8`, oppure le somme a spostamenti di `trellis_grid`), impacchettare i 4 valori di una lane in un `uint` e fare per token **un solo** `dot4` a segno misto (pesi senza segno, attivazioni int8; `v_dot4_i32_iu8` su RDNA3/4) con le 4 attivazioni int8 impacchettate senza replica. Il -126 resta come oggi, tramite la somma delle attivazioni in `qmeta`. A 4 token: 4 `dot4` (somme) + impacchettamento (~3 operazioni) + 4 `dot4` (token), invece di 16; letture per token e tile 4 + 8 byte invece di 24. Serve un nuovo formato di `trellis_quant.comp` (4 int8 per lane senza replica) e una variante del kernel; la variante a 1 token probabilmente resta migliore con il formato attuale (da misurare). Controllare nell'ISA (`GGML_VK_PIPELINE_ISA`) che il driver usi davvero l'istruzione a segno misto.
@@ -46,7 +47,7 @@ Aggiornare questa sezione a ogni passaggio di consegne.
   Misura: casi perf `test-backend-ops` 5120 → 17408 TRL3/TRL4 a 1 e 4 token (oggi 112,5 / 215,9 µs per TRL3), poi tg64 e il server DFlash2 3 token come in B1/D2. Obiettivo: 4 token ≤ ~1,3 volte 1 token.
 - **[HIP] E1 conclusa**: su RX 9070 con ROCm 10.2.0, PR #3 `f52affb46` e DLL del venv, B2 224,14 / 8,01 t/s e B3 a profondità 32.768 213,77 / 7,98 t/s (prefill / generazione). CTest 2/2, TRL1–6 e 380/380 prodotti passati; modello 31/31 top-1 a microbatch 1 e 32. I 65/65 layer sono su ROCm0, l'embedding Trellis resta su CPU. Nessuna delle soglie E1 è raggiunta. Raccomandazione: fermare l'ottimizzazione HIP e sottoporre all'utente il prossimo passo.
 - **[HIP] Profilo prefill concluso**: unpack + GEMM pesano l'83,1% nel prefill breve e il 75,1% a profondità 32.768. A 32K il prefill profilato è 212,25 t/s. L'intervento con più margine è un prototipo WMMA RDNA4 che sostituisca entrambe le fasi, con validazione e soglie E1. Per 550 t/s servirebbe circa 5,5 volte sul blocco a parità degli altri tempi. Piano in `D:\Progetti\NariQ HIP RDNA4\NARIQ_HIP_OPTIMIZATION.md`. Il prototipo di ottimizzazione resta da provare.
-- **Prossimo passo**: decisione dell'utente dopo E1. Su Vulkan, se si continua: B6 (verifica a 4 token più economica: per esempio prodotto a 4 token con le matrici int8 della scheda, oppure meno letture delle attivazioni per token) e A5b (letture dei codici condivise nel sottogruppo). Margini aperti sul prefill: blocchi di token più grandi (`VK_TRELLIS_BATCH` = 128: ogni peso si decodifica 4 volte per 512 token), decodifica in anticipo del passo successivo (doppio buffer in memoria condivisa).
+- **Prossimo passo**. B5, verificare 5–8 token usando la stessa tile di pesi per due prodotti WMMA e conservando gli accumulatori separati. Scegliere la lunghezza DFlash2 su D2 in base a token/s, accettazione, VRAM e qualità. Valutare C6 per il prefill in INT8. Per arrivare al minimo D2 sul breve, a parità di accettazione, il ciclo deve scendere a circa 40 ms.
 - **Script di prova del server**: lo scratchpad di Claude non è condiviso. Per una prova equivalente avviare `build\bin\llama-server.exe` con gli argomenti dell'esempio in `NARIQ_VULKAN_PROGRESS.md` più `--spec-type draft-dflash --spec-draft-model D:\Progetti\openclaw\models\qwen38-27b-dflash2\Qwen3.8-27B-DFlash2-Q4_K_M.gguf --spec-draft-device Vulkan0 --spec-draft-ngl 99 --spec-draft-type-k q4_0 --spec-draft-type-v q4_0 --spec-draft-n-max 3 --spec-accept rejection -bs --spec-draft-vocab 65536`, `-c 32768 -ub 512`, e inviare a `/completion` un prompt di ~1500 token con `n_predict` 256; leggere `timings.predicted_per_second`, `draft_n`, `draft_n_accepted`.
 
 ## Regole di lavoro
@@ -131,10 +132,10 @@ Stato: `da fare`, `in corso (chi)`, `fatto`, `scartato`. Le stime di guadagno so
 | --- | --- | --- | --- |
 | B1 | Misurare DFlash2 con 3 token anticipati su NariQ | fatto | Dopo B2: senza bozza 24,0, bozza 2/3/4 token 38,7 / 42,2 / 17,1 t/s (prompt ripetitivo). Ciclo ~87 ms |
 | B4 | Profilo di un ciclo DFlash2 (modello a 4 token, bozza, teste di uscita) | fatto | Vedi "Stato attuale" e il registro del 25/11. Corrette le proiezioni da 48 righe (`7a5cae586`) |
-| B5 | Estendere il prodotto int8 a 5-8 token (bozza a 4-7) se il profilo lo giustifica | da fare | Oggi oltre 4 token si cade su `trellis_matmul` float |
+| B5 | Estendere la verifica a 5–8 token (4–7 token draft) | da fare | Riutilizzare la tile dei pesi decodificata in due prodotti WMMA e conservare la stessa somma FP32 per gruppo. Confrontare separatamente forma 5120 → 17408 e D2, partendo da 4 token draft. |
 | B2 | Prodotto a più colonne: decodificare ogni peso una volta per tutte le colonne | fatto (`3b8cc30e7`) | 4 token: TRL3 407 → 216 µs; 1 token invariato grazie a una variante dedicata | Con A5a ogni colonna in più costa un solo `dot4` per peso. Oggi `trellis_matvec` (batch ≤ 4) lancia un gruppo per token (`gl_WorkGroupID.y`) e decodifica i pesi una volta per token |
 | B3 | Scegliere i token anticipati (2-4) in base ai tempi misurati | da fare | |
-| B6 | Verifica a 4 token più economica: portare il prodotto a 4 token da ~1,9 a ~1,2-1,3 volte quello a 1 token | Idea 1 validata, opt-in. Traguardo aperto | TRL3 1,61. DFlash2 D2 +7,7% a +11,8% sul testo di prova. Analisi e risultati in "Stato attuale" |
+| B6 | Verifica a 4 token più economica | Idee 1 e 2 validate, opt-in | Rapporti 4/1 1,35 e 1,38. D2 37,23/40,32/39,90 t/s. Il traguardo 1,3 resta aperto. |
 
 ### Fase C: prefill
 
@@ -145,6 +146,7 @@ Stato: `da fare`, `in corso (chi)`, `fatto`, `scartato`. Le stime di guadagno so
 | C3 | Prodotto cooperativo con tile più grandi entro i 32 KB di memoria condivisa del driver Windows; decodifica dei pesi una volta per tile | fatto (`af07eaa13`) | 32 uscite × 128 token per gruppo, 256 thread che decodificano 8 tile ogni 64 input, attivazioni FP16 preparate una volta per pezzo con una potenza di 2 per token. pp512 150 → ~490, 32K 147 → 395 |
 | C5 | Prodotto cooperativo: forma del gruppo di lavoro | fatto (`71b71362e`) | 64 righe × 32 input per passo, migliore di 2×4, 4×4, 4×1, 8×1, 8×2 (vedi registro); k diviso per le proiezioni da 48 righe |
 | C4 | Attenzione del prefill: verificare che la cache q4_0 usi la conversione f16 (`74856e4`) anche con NariQ | da fare | Comune ai due modelli |
+| C6 | Valutare il prefill Trellis INT8 su Vulkan | da fare | Pesi già interi nel tile e scala delle attivazioni da scegliere. Confrontare pp512 e B3 con C3 FP16 e misurare logits e perplexity. La PR propone il percorso CUDA e la fusione MLP. [Nari Labs #5](https://github.com/nari-labs/nari-llama.cpp/pull/5) |
 
 ### Fase D: integrazione in OpenClaw
 
@@ -187,6 +189,124 @@ Obiettivo: sapere in poche ore se una build HIP di NariQ parte già meglio della
 ## Registro delle prove
 
 Voci più recenti in alto. Formato: data, chi, commit o "non committato", cosa, numeri (riferimento → candidato), esito.
+
+- **25/11/2026, Codex**, B6 idea 2 finale, build Windows Release con barriera iniziale. In A-B-B-A a quattro token TRL3 195,03 → 147,65 µs (-24,3%) e TRL4 190,34 → 146,97 µs (-22,8%), rapporti 4/1 1,35 e 1,38. Vulkan 416/416, CTest 4/4 e identità bit per bit dei logits contro A5b. Contro CPU top-1 31/31, stessi greedy e KL max 2,10e-4. DFlash2 B1 51,31 → 65,13, D2 29,02/31,89/31,31 → 37,23/40,32/39,90 t/s (breve/32K/65K) con gli stessi hash e la stessa accettazione. Picco D2 13,65 GiB dedicati e 0,10 condivisi. Accettata come opzione sperimentale. Log `build/b6-cm/final-*` e baseline `v4-server-0.*`.
+
+- **25/11/2026, Codex**, B6 idea 2, final-server-1 (exit 0). short 37.23 t/s, accettati 281/689, ciclo 59.76 ms | ctx32k 40.32 t/s, accettati 156/297, ciclo 63.88 ms | ctx65k 39.90 t/s, accettati 157/297, ciclo 64.55 ms. Picco 13.65 GiB dedicati e 0.10 condivisi. Processi concorrenti assenti prima della prova, 14.945 GiB stimati liberi. Log in build/b6-cm/final-server-1.*.
+
+- **25/11/2026, Codex**, B6 idea 2, final-b1-1 (exit 0). b1 65.13 t/s, accettati 192/192, ciclo 61.17 ms. Picco 11.85 GiB dedicati e 0.10 condivisi. Processi concorrenti assenti prima della prova, 14.945 GiB stimati liberi. Log in build/b6-cm/final-b1-1.*.
+
+- **25/11/2026, Codex**, B6 idea 2, final-logits-u4 (exit 0). CPU top-1 31/31, greedy uguale: True, KL max 2.101E-004. Contro A5b packed KL max 0.000E+000, logits bit identici: True. Processi concorrenti assenti prima della prova, 14.956 GiB stimati liberi. Log in build/b6-cm/final-logits-u4.*.
+
+- **25/11/2026, Codex**, B6 idea 2, final-ctest (exit 0). CTest Trellis 4/4. Processi concorrenti assenti prima della prova, 14.945 GiB stimati liberi. Log in build/b6-cm/final-ctest.*.
+
+- **25/11/2026, Codex**, B6 idea 2, final-perf-a2 (exit 0), 5120 → 17408: TRL3 t1 107.72 µs, TRL3 t4 190.90 µs, TRL4 t1 106.78 µs, TRL4 t4 186.56 µs. Processi concorrenti assenti, 14.945 GiB stimati liberi. Log build/b6-cm/final-perf-a2.log.
+
+- **25/11/2026, Codex**, B6 idea 2, final-perf-b2 (exit 0), 5120 → 17408: TRL3 t1 107.76 µs, TRL3 t4 147.65 µs, TRL4 t1 106.59 µs, TRL4 t4 147.27 µs. Processi concorrenti assenti, 14.946 GiB stimati liberi. Log build/b6-cm/final-perf-b2.log.
+
+- **25/11/2026, Codex**, B6 idea 2, final-perf-b1 (exit 0), 5120 → 17408: TRL3 t1 111.14 µs, TRL3 t4 147.65 µs, TRL4 t1 106.51 µs, TRL4 t4 146.67 µs. Processi concorrenti assenti, 14.956 GiB stimati liberi. Log build/b6-cm/final-perf-b1.log.
+
+- **25/11/2026, Codex**, B6 idea 2, final-perf-a1 (exit 0), 5120 → 17408: TRL3 t1 112.35 µs, TRL3 t4 199.17 µs, TRL4 t1 110.91 µs, TRL4 t4 194.11 µs. Processi concorrenti assenti, 14.956 GiB stimati liberi. Log build/b6-cm/final-perf-a1.log.
+
+- **25/11/2026, Codex**, B6 idea 2, sorgente finale con barriera iniziale: BUILD_OK e test-backend-ops   416/416 tests passed (exit 0), processi concorrenti assenti e 14.945 GiB stimati liberi. Log build/b6-cm/build-final.log e final-check.log.
+
+- **25/11/2026, Codex**, B6 idea 2, conclusione A/B v4: D2 +29,5% / +30,8% / +26,9%, cicli 76,66/80,76/82,27 → 59,21/61,74/64,82 ms e stessi token accettati 281/689, 156/297, 157/297. Picco dedicato 13,647 GiB e condiviso 0,099 in entrambi. B1 51,31 → 64,85, stesso hash e 192/192. B2 ~25 tg64, B3 23,70 → 23,72 tg64 e 466,28 → 471,02 pp512. In revisione aggiunta la barriera iniziale per rendere ordinati gli azzeramenti e le riscritture sparse eseguite da lane diverse. Nessuna modifica all’accumulo. Esito: ricompilare e qualificare questa versione.
+
+- **25/11/2026, Codex**, B6 idea 2, v4-bench3-1 (exit 0). pp512 471.02 t/s e tg64 23.72 t/s, profondità 32768, 1 ripetizione. Processi concorrenti assenti prima della prova, 14.808 GiB stimati liberi. Log in build/b6-cm/v4-bench3-1.*.
+
+- **25/11/2026, Codex**, B6 idea 2, v4-bench3-0 (exit 0). pp512 466.28 t/s e tg64 23.70 t/s, profondità 32768, 1 ripetizione. Processi concorrenti assenti prima della prova, 14.863 GiB stimati liberi. Log in build/b6-cm/v4-bench3-0.*.
+
+- **25/11/2026, Codex**, B6 idea 2, v4-server-1 (exit 0). short 37.58 t/s, accettati 281/689, ciclo 59.21 ms | ctx32k 41.72 t/s, accettati 156/297, ciclo 61.74 ms | ctx65k 39.74 t/s, accettati 157/297, ciclo 64.82 ms. Picco 13.65 GiB dedicati e 0.10 condivisi. Processi concorrenti assenti prima della prova, 14.851 GiB stimati liberi. Log in build/b6-cm/v4-server-1.*.
+
+- **25/11/2026, Codex**, B6 idea 2, v4-server-0 (exit 0). short 29.02 t/s, accettati 281/689, ciclo 76.66 ms | ctx32k 31.89 t/s, accettati 156/297, ciclo 80.76 ms | ctx65k 31.31 t/s, accettati 157/297, ciclo 82.27 ms. Picco 13.65 GiB dedicati e 0.10 condivisi. Processi concorrenti assenti prima della prova, 14.882 GiB stimati liberi. Log in build/b6-cm/v4-server-0.*.
+
+- **25/11/2026, Codex**, B6 idea 2, v4-b1-1 (exit 0). b1 64.85 t/s, accettati 192/192, ciclo 61.44 ms. Picco 11.85 GiB dedicati e 0.10 condivisi. Processi concorrenti assenti prima della prova, 14.864 GiB stimati liberi. Log in build/b6-cm/v4-b1-1.*.
+
+- **25/11/2026, Codex**, B6 idea 2, v4-b1-0 (exit 0). b1 51.31 t/s, accettati 192/192, ciclo 77.65 ms. Picco 11.85 GiB dedicati e 0.10 condivisi. Processi concorrenti assenti prima della prova, 14.359 GiB stimati liberi. Log in build/b6-cm/v4-b1-0.*.
+
+- **25/11/2026, Codex**, B6 idea 2, v4-bench-1 (exit 0). pp512 628.92 t/s e tg64 25.20 t/s, 3 ripetizioni. Processi concorrenti assenti prima della prova, 14.562 GiB stimati liberi. Log in build/b6-cm/v4-bench-1.*.
+
+- **25/11/2026, Codex**, B6 idea 2, v4-bench-0 (exit 0). pp512 623.63 t/s e tg64 25.54 t/s, 3 ripetizioni. Processi concorrenti assenti prima della prova, 14.53 GiB stimati liberi. Log in build/b6-cm/v4-bench-0.*.
+
+- **25/11/2026, Codex**, B6 idea 2, v4-logits-u4 (exit 0). CPU top-1 31/31, greedy uguale: True, KL max 2.101E-004. Contro A5b packed KL max 0.000E+000, logits bit identici: True. Processi concorrenti assenti prima della prova, 14.543 GiB stimati liberi. Log in build/b6-cm/v4-logits-u4.*.
+
+- **25/11/2026, Codex**, B6 idea 2, v4-ctest (exit 0). CTest Trellis 4/4. Processi concorrenti assenti prima della prova, 14.541 GiB stimati liberi. Log in build/b6-cm/v4-ctest.*.
+
+- **25/11/2026, Codex**, B6 idea 2, v4 A-B-B-A con accumulatori cooperativi FP32 nei registri: a 4 token TRL3 190,45 → 147,60 µs, TRL4 186,95 → 146,95 µs. A 1 token TRL3 107,76 → 107,70 µs e TRL4 106,39 → 106,67. Nessun processo concorrente e 14,54–14,55 GiB stimati liberi. La variante evita store e reload dei 256 parziali ad ogni tile. Esito: verificare logits esatti e DFlash2. Log `build/b6-cm/v4-perf-*`.
+
+- **25/11/2026, Codex**, B6 idea 2, v4-perf-a2 (exit 0), 5120 → 17408: TRL3 t1 107.95 µs, TRL3 t4 190.68 µs, TRL4 t1 106.66 µs, TRL4 t4 185.93 µs. Processi concorrenti assenti, 14.548 GiB stimati liberi. Log build/b6-cm/v4-perf-a2.log.
+
+- **25/11/2026, Codex**, B6 idea 2, v4-perf-b2 (exit 0), 5120 → 17408: TRL3 t1 107.53 µs, TRL3 t4 147.68 µs, TRL4 t1 106.71 µs, TRL4 t4 146.42 µs. Processi concorrenti assenti, 14.542 GiB stimati liberi. Log build/b6-cm/v4-perf-b2.log.
+
+- **25/11/2026, Codex**, B6 idea 2, v4-perf-b1 (exit 0), 5120 → 17408: TRL3 t1 107.87 µs, TRL3 t4 147.51 µs, TRL4 t1 106.63 µs, TRL4 t4 147.47 µs. Processi concorrenti assenti, 14.543 GiB stimati liberi. Log build/b6-cm/v4-perf-b1.log.
+
+- **25/11/2026, Codex**, B6 idea 2, v4-perf-a1 (exit 0), 5120 → 17408: TRL3 t1 107.56 µs, TRL3 t4 190.21 µs, TRL4 t1 106.11 µs, TRL4 t4 187.96 µs. Processi concorrenti assenti, 14.548 GiB stimati liberi. Log build/b6-cm/v4-perf-a1.log.
+
+- **25/11/2026, Codex**, B6 idea 2, v4 BUILD_OK e test-backend-ops   416/416 tests passed (exit 0), processi concorrenti assenti e 14.548 GiB stimati liberi. Log build/b6-cm/build-v4.log e v4-check.log.
+
+- **25/11/2026, Codex**, B6 idea 2, A-B-B-A v3: 4 token TRL3 190,65 → 207,04 µs (+8,6%), TRL4 186,44 → 222,90 (+19,6%); un token neutro. Processi assenti e 14,54–14,55 GiB stimati liberi. Le somme parziali del dot4 sono mantenute, ma il passaggio di ogni parziale per LDS costa troppo. Esito: non accettare v3. Provare a conservare gli accumulatori cooperativi nei registri; archiviare shader e DLL v3. Log `build/b6-cm/v3-perf-*`.
+
+- **25/11/2026, Codex**, B6 idea 2, v3-perf-a2 (exit 0), 5120 → 17408: TRL3 t1 107.55 µs, TRL3 t4 190.48 µs, TRL4 t1 106.26 µs, TRL4 t4 185.67 µs. Processi concorrenti assenti, 14.543 GiB stimati liberi. Log build/b6-cm/v3-perf-a2.log.
+
+- **25/11/2026, Codex**, B6 idea 2, v3-perf-b2 (exit 0), 5120 → 17408: TRL3 t1 107.61 µs, TRL3 t4 205.60 µs, TRL4 t1 106.16 µs, TRL4 t4 222.93 µs. Processi concorrenti assenti, 14.548 GiB stimati liberi. Log build/b6-cm/v3-perf-b2.log.
+
+- **25/11/2026, Codex**, B6 idea 2, v3-perf-b1 (exit 0), 5120 → 17408: TRL3 t1 107.20 µs, TRL3 t4 208.48 µs, TRL4 t1 106.62 µs, TRL4 t4 222.87 µs. Processi concorrenti assenti, 14.548 GiB stimati liberi. Log build/b6-cm/v3-perf-b1.log.
+
+- **25/11/2026, Codex**, B6 idea 2, v3-perf-a1 (exit 0), 5120 → 17408: TRL3 t1 107.49 µs, TRL3 t4 190.81 µs, TRL4 t1 106.27 µs, TRL4 t4 187.20 µs. Processi concorrenti assenti, 14.541 GiB stimati liberi. Log build/b6-cm/v3-perf-a1.log.
+
+- **25/11/2026, Codex**, B6 idea 2, tentativo microbenchmark v3: nessuna prova GPU avviata per un errore di sintassi nel wrapper A/B. Corretta la prima riga, ripetere senza modifiche allo shader.
+
+- **25/11/2026, Codex**, B6 idea 2, v3 BUILD_OK e test-backend-ops 416/416 tests passed (exit 0), processi concorrenti assenti e 14.543 GiB stimati liberi. Log build/b6-cm/build-v3.log e v3-check.log.
+
+- **25/11/2026, Codex**, B6 idea 2, D2 v2 conclusa: 28,43/31,99/30,59 → 32,85/32,93/30,39 t/s (breve/32K/65K), ciclo stimato 78,26/80,52/84,20 → 66,96/71,93/74,05 ms. Accettati 281/689, 156/297, 157/297 → 279/697, 148/323, 142/340. Hash diversi per tutti e tre; picco dedicato 13,64 → 13,65 GiB. Esito: WMMA ha margine sul ciclo; v2 non promossa per la diversità numerica e il B1 peggiorato. Log `build/b6-cm/server-[01].*`.
+
+- **25/11/2026, Codex**, B6 idea 2, server-1 (exit 0). short 32.85 t/s, accettati 279/697, ciclo 66.96 ms | ctx32k 32.93 t/s, accettati 148/323, ciclo 71.93 ms | ctx65k 30.39 t/s, accettati 142/340, ciclo 74.05 ms. Picco 13.65 GiB dedicati e 0.10 condivisi. Processi concorrenti assenti prima della prova, 14.334 GiB stimati liberi. Log in build/b6-cm/server-1.*.
+
+- **25/11/2026, Codex**, B6 idea 2, v3 preparazione: B1 v2 cambia hash del testo e accettazione (192/192 → 167/264). La variante v3 usa le 16 colonne della matrice per 4 token × 4 gruppi di quattro pesi, così ogni somma parziale e il suo accumulo FP32 seguono il dot4. Compilazione standalone e spirv-val passati. V2 archiviato in `build/b6-cm/trellis_verify_cm-v2.comp`. Esito: completare D2 v2 prima di ricompilare.
+
+- **25/11/2026, Codex**, B6 idea 2, server-0 (exit 0). short 28.43 t/s, accettati 281/689, ciclo 78.26 ms | ctx32k 31.99 t/s, accettati 156/297, ciclo 80.52 ms | ctx65k 30.59 t/s, accettati 157/297, ciclo 84.20 ms. Picco 13.64 GiB dedicati e 0.35 condivisi. Processi concorrenti assenti prima della prova, 14.342 GiB stimati liberi. Log in build/b6-cm/server-0.*.
+
+- **25/11/2026, Codex**, B6 idea 2, b1-1 (exit 0). b1 43.12 t/s, accettati 167/264, ciclo 67.20 ms. Picco 11.85 GiB dedicati e 0.10 condivisi. Processi concorrenti assenti prima della prova, 14.343 GiB stimati liberi. Log in build/b6-cm/b1-1.*.
+
+- **25/11/2026, Codex**, B6 idea 2, b1-0 (exit 0). b1 52.19 t/s, accettati 192/192, ciclo 76.34 ms. Picco 11.85 GiB dedicati e 0.10 condivisi. Processi concorrenti assenti prima della prova, 14.343 GiB stimati liberi. Log in build/b6-cm/b1-0.*.
+
+- **25/11/2026, Codex**, B6 idea 2, bench-1 (exit 0). pp512 608.91 t/s e tg64 24.97 t/s, 3 ripetizioni. Processi concorrenti assenti prima della prova, 14.343 GiB stimati liberi. Log in build/b6-cm/bench-1.*.
+
+- **25/11/2026, Codex**, B6 idea 2, bench-0 (exit 0). pp512 631.48 t/s e tg64 25.68 t/s, 3 ripetizioni. Processi concorrenti assenti prima della prova, 14.343 GiB stimati liberi. Log in build/b6-cm/bench-0.*.
+
+- **25/11/2026, Codex**, B6 idea 2, chiarimento logits: il confronto con CPU passa il protocollo A5a (31/31 top-1, greedy identico, KL max 1,50e-4 contro 2,10e-4 di A5b). Il confronto aggiuntivo con A5b a 1e-6 fallisce (3,36e-4, top-1 31/31) e spiega il codice uscita 1 del wrapper. Il nuovo shader completa la somma intera del tile prima del FMA e raggruppa le somme float diversamente da dot4. Il traguardo qualità per OpenClaw resta aperto; misurare D2 con confronti di hash e accettazione.
+
+- **25/11/2026, Codex**, B6 idea 2, logits-u4 (exit 1). CPU top-1 1 su 31 posizioni, greedy uguale: True, KL max 1.500E-004. Contro A5b packed KL max 3.364E-004, top-1 1. Processi concorrenti assenti prima della prova, 14.343 GiB stimati liberi. Log in build/b6-cm/logits-u4.*.
+
+- **25/11/2026, Codex**, B6 idea 2, ctest (exit 0). CTest Trellis 4/4. Processi concorrenti assenti prima della prova, 14.343 GiB stimati liberi. Log in build/b6-cm/ctest.*.
+
+- **25/11/2026, Codex**, B6 idea 2, sintesi A-B-B-A corretta: a quattro token TRL3 190,65 → 156,99 µs (-17,7%), TRL4 188,09 → 159,54 (-15,2%); a un token TRL3 108,11 → 108,01, TRL4 107,06 → 106,83. I rapporti passano da 1,76 a 1,45 e da 1,76 a 1,49. Processi assenti e 14,342 GiB stimati liberi in ogni run, baseline build/ref-bin con packed. Esito: promossa alla prova end-to-end, soglia 1,3 non raggiunta.
+
+- **25/11/2026, Codex**, B6 idea 2, perf-a2 (exit 0), 5120 → 17408: TRL3 t1 108.13 µs, TRL3 t4 191.00 µs, TRL4 t1 107.47 µs, TRL4 t4 190.28 µs. Processi concorrenti assenti, 14.342 GiB stimati liberi. Log build/b6-cm/perf-a2.log.
+
+- **25/11/2026, Codex**, B6 idea 2, perf-b2 (exit 0), 5120 → 17408: TRL3 t1 107.98 µs, TRL3 t4 156.86 µs, TRL4 t1 106.77 µs, TRL4 t4 159.51 µs. Processi concorrenti assenti, 14.342 GiB stimati liberi. Log build/b6-cm/perf-b2.log.
+
+- **25/11/2026, Codex**, B6 idea 2, perf-b1 (exit 0), 5120 → 17408: TRL3 t1 108.04 µs, TRL3 t4 157.11 µs, TRL4 t1 106.89 µs, TRL4 t4 159.56 µs. Processi concorrenti assenti, 14.342 GiB stimati liberi. Log build/b6-cm/perf-b1.log.
+
+- **25/11/2026, Codex**, B6 idea 2, perf-a1 (exit 0), 5120 → 17408: TRL3 t1 108.08 µs, TRL3 t4 190.30 µs, TRL4 t1 106.64 µs, TRL4 t4 185.90 µs. Processi concorrenti assenti, 14.342 GiB stimati liberi. Log build/b6-cm/perf-a1.log.
+
+- **25/11/2026, Codex**, B6 idea 2, build v2 riuscita (`BUILD_OK`) e test-backend-ops Vulkan 416/416 con WMMA opt-in, inclusi i casi TRL1–6 e GET_ROWS. Processi concorrenti assenti, 14,342 GiB liberi stimati. Log `build/b6-cm/build-v2.log` e `check-v2.log`. Esito: misurare A-B-B-A.
+
+- **25/11/2026, Codex**, B6 idea 2, test-backend-ops v1: 356/416. Processi concorrenti assenti, VRAM libera stimata 14,266 GiB. Il prototipo leggeva la scala a un offset doppio rispetto al buffer compatto B6. Log `build/b6-cm/check-v1.log`. Esito: correggere l’offset e ripetere. Il primo risultato prestazionale resta indicativo.
+
+- **25/11/2026, Codex**, B6 idea 2, ISA v1: RX 9070, 14,336 GiB stimati liberi, processi concorrenti assenti. TRL3 5120 → 17408 a 4 token 156,44 µs in una prova singola con estrazione ISA. Il driver ha emesso v_wmma_i32_16x16x16_iu8 con entrambi gli ingressi con segno. Log `build/b6-cm/isa-v1-real.log` e `isa-trellis_verify_cm-0.txt`. Esito: validare e misurare A/B senza diagnostica.
+
+- **25/11/2026, Codex**, B6 idea 2, ripetizione ISA: il primo cambio del wrapper non aveva sostituito il comando test. Ancora 0 casi eseguiti. Corretto il comando e controllato il contenuto del wrapper.
+
+- **25/11/2026, Codex**, B6 idea 2, tentativo ISA v1: preflight Windows riuscito, processi assenti e 14,336 GiB stimati liberi. Il caso 5120 → 17408 è solo perf, quindi in modalità test sono stati eseguiti 0 casi. Esito: usare perf per ISA e suite completa per correttezza.
+
+- **25/11/2026, Codex**, B6 idea 2, secondo preflight ISA: elenco processi accessibile, ma il wrapper cercava vram-free.py nella nuova cartella dei log. Nessuna prova GPU avviata. Copiato lo script WDDM già usato in B6.
+
+- **25/11/2026, Codex**, B6 idea 2, primo preflight ISA: nel sandbox Get-CimInstance non ha accesso alla lista dei worker Python/Node. Nessun test GPU avviato. Esito: rifare il preflight con accesso ai processi Windows prima di misurare.
+
+- **25/11/2026, Codex**, B6 idea 2, build Windows Release riuscita (BUILD_OK). Shader integrato nella stessa dispatch del dot4 solo in opt-in e con la forma Vulkan richiesta. Riutilizza le attivazioni INT8 e la scala per tile da 16. Log `build/b6-cm/build-v1.log`. Esito: verificare un caso TRL3 e poi misurare.
+
+- **25/11/2026, Codex**, B6 idea 2, preflight: sulla RX 9070 il driver AMD 26.11.2 (LLPC) espone `VK_KHR_cooperative_matrix`, forma subgroup 16×16×16 S8/S8/S32/S32 senza saturazione, oltre alle forme miste. Verificato con `vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR`; `vulkaninfo` da solo mostra estensione e feature. Primo shader compilato con glslc 1.4.363.0 e accettato da spirv-val. Riferimenti: PR [Nari Labs #5](https://github.com/nari-labs/nari-llama.cpp/pull/5) per prefill CUDA INT8 e [upstream #30106](https://github.com/ggml-org/llama.cpp/pull/30106) per tile Vulkan piccoli. Log e sonda: `build/b6-cm/capabilities.*`. Esito: misurare il prototipo mantenendo le scale ogni 16 input.
 
 - **25/11/2026, Codex**, A5b finale: microbenchmark A-B-B-A, 5120 → 17408. A un token TRL3 120,43 → 118,75 µs (-1,4%), TRL4 112,91 → 112,70 µs. A quattro token TRL3 196,07 → 197,87 e TRL4 196,55 → 197,48 µs, prodotti a quattro token esclusi da A5b. Prima dei run assenti processi concorrenti, 14,08–14,10 GiB stimati liberi. Esito: accettate due letture dirette a un token per i casi che rientrano in 64 bit, sulla base della parità esatta, del piccolo guadagno breve e del risultato neutro a 32K. Log `build/a5b/final-perf-*`.
 

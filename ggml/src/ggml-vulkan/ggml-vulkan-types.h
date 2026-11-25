@@ -756,6 +756,7 @@ struct vk_device_struct {
     bool coopmat_bf16_support {};
     bool coopmat_support_16x16x16_f16acc {};
     bool coopmat_support_16x16x16_f32acc {};
+    bool coopmat_support_16x16x16_s8 {};
     bool coopmat1_fa_support {};
     uint32_t coopmat_m;
     uint32_t coopmat_n;
@@ -874,6 +875,7 @@ struct vk_device_struct {
     vk_pipeline pipeline_trellis_matvec[6], pipeline_trellis_matmul[6], pipeline_trellis_decode_rows[6];
     vk_pipeline pipeline_trellis_matvec_q8[6], pipeline_trellis_matvec_q8x4[6], pipeline_trellis_quant, pipeline_trellis_reduce;
     vk_pipeline pipeline_trellis_matvec_q8x4_packed[6], pipeline_trellis_quant_packed;
+    vk_pipeline pipeline_trellis_verify_cm[6];
     vk_pipeline pipeline_trellis_matmul_cm1[6];
     vk_pipeline pipeline_trellis_mm_cm1[6], pipeline_trellis_mm_res_cm1[6], pipeline_trellis_prep16;
     vk_pipeline pipeline_rms_norm_f32;

@@ -172,6 +172,23 @@ Superati 4/4 CTest e 416/416 casi Vulkan per Trellis e lookup delle righe. I 31 
 
 `llama-server` ha completato una richiesta con un prompt breve e 12 token generati a 17,44 tok/s, con contesto configurato a 8.192 token, cache Q4 e 65/65 layer su Vulkan.
 
+## Verifica DFlash2 con matrici cooperative INT8
+
+B6 usa una matrice Vulkan INT8 16×16×16 con accumulo INT32 sulla RX 9070. Ogni colonna calcola il prodotto di quattro pesi per un token. I quattro parziali di ciascun token mantengono l'ordine di accumulo FP32 del dot4. Gli accumulatori restano nei registri fino alla riduzione finale e i pesi GGUF restano compressi.
+
+Per abilitare il percorso sperimentale nella shell di avvio impostare entrambe le variabili.
+
+```powershell
+$env:GGML_VK_TRELLIS_Q8_PACKED = '1'
+$env:GGML_VK_TRELLIS_VERIFY_CM = '1'
+```
+
+Il dispatch richiede un batch da 2–4 token, la forma 16×16×16 supportata e sottogruppi da 32. Negli altri casi si usa il percorso già previsto per la forma.
+
+Sul microbenchmark 5120 → 17408 a 4 token, TRL3 195,03 → 147,65 µs (-24,3%) e TRL4 190,34 → 146,97 µs (-22,8%). I rapporti fra quattro token e uno sono 1,35 e 1,38. Con DFlash2 da 3 token e cache q4_0, B1 51,31 → 65,13 tok/s. Nella prova testuale D2, 29,02/31,89/31,31 → 37,23/40,32/39,90 tok/s (breve/32K/65K), stesso testo e stessa accettazione. Il picco con contesto allocato 114688 e proiettore su CPU è 13,65 GiB dedicati e 0,10 condivisi. B2 e B3 hanno mantenuto circa 25 e 24 tok/s senza bozza.
+
+Test Vulkan 416/416, CTest 4/4 e logits identici bit per bit ad A5b nelle 31 posizioni del test. Contro CPU, top-1 31/31 e KL massima 2,10×10⁻⁴, lo stesso risultato del dot4. Per le prove con immagini, tool calling e per il passaggio in OpenClaw restano da soddisfare le soglie del piano. [Piano e registro](NARIQ_PIANO.md)
+
 ## Riproduzione delle prove
 
 Da un nuovo checkout Windows x64 del branch, usare `scripts\build-vulkan-windows.cmd` con MSVC e Vulkan SDK. Lo script crea gli eseguibili in `build/bin`. Nel checkout locale qui sotto si usa la build già pronta in `build/packaging-x64/bin`. Sostituire `$build` con `'.\build'` dopo una compilazione tramite script. Eseguire dalla radice del repository, con il GGUF 3.0 bpw disponibile in `models`.

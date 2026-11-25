@@ -3336,6 +3336,15 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         if (device->integer_dot_product_packed_mixed) {
             ggml_vk_create_pipeline(device, device->pipeline_trellis_matvec_q8x4_packed[i], "trellis_matvec_q8x4_packed", trellis_matvec_q8x4_packed_len, trellis_matvec_q8x4_packed_data, "main", 4, sizeof(vk_trellis_product), {16, 1, 1}, {i + 1}, 1);
         }
+#if defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
+        if (device->coopmat_support_16x16x16_s8 && device->coopmat_support_16x16x16_f32acc && device->vulkan_memory_model &&
+            device->integer_dot_product_packed_mixed && device->subgroup_require_full_support &&
+            device->subgroup_size_control && device->subgroup_min_size <= 32 && 32 <= device->subgroup_max_size) {
+            ggml_vk_create_pipeline(device, device->pipeline_trellis_verify_cm[i], "trellis_verify_cm",
+                                    trellis_verify_cm1_len, trellis_verify_cm1_data, "main", 4,
+                                    sizeof(vk_trellis_product), {16, 1, 1}, {i + 1}, 1, false, true, 32);
+        }
+#endif
 #endif
         ggml_vk_create_pipeline(device, device->pipeline_trellis_matmul[i], "trellis_matmul", trellis_matmul_len, trellis_matmul_data, "main", 4, sizeof(vk_trellis_product), {16, 16, 1}, {i + 1}, 1);
 #if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
@@ -4810,6 +4819,14 @@ vk_device ggml_vk_get_device(size_t idx) {
 
             for (auto& prop : cm_props) {
                 VK_LOG_DEBUG("ggml_vulkan: M: " << prop.MSize << " N: " << prop.NSize << " K: " << prop.KSize << " A: " << vk::to_string((vk::ComponentTypeKHR)prop.AType) << " B: " << vk::to_string((vk::ComponentTypeKHR)prop.BType) << " C: " << vk::to_string((vk::ComponentTypeKHR)prop.CType) << " Result: " << vk::to_string((vk::ComponentTypeKHR)prop.ResultType) << " saturatingAccumulation: " << prop.saturatingAccumulation << " scope: " << vk::to_string((vk::ScopeKHR)prop.scope));
+
+                if (vk12_features.shaderInt8 && !prop.saturatingAccumulation &&
+                    prop.MSize == 16 && prop.NSize == 16 && prop.KSize == 16 &&
+                    prop.AType == VK_COMPONENT_TYPE_SINT8_KHR && prop.BType == VK_COMPONENT_TYPE_SINT8_KHR &&
+                    prop.CType == VK_COMPONENT_TYPE_SINT32_KHR && prop.ResultType == VK_COMPONENT_TYPE_SINT32_KHR &&
+                    prop.scope == VK_SCOPE_SUBGROUP_KHR) {
+                    device->coopmat_support_16x16x16_s8 = true;
+                }
 
                 if ((vk::ComponentTypeKHR)prop.AType == vk::ComponentTypeKHR::eFloat16 &&
                     (vk::ComponentTypeKHR)prop.BType == vk::ComponentTypeKHR::eFloat16 &&
