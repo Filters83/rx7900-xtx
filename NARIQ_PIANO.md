@@ -27,7 +27,7 @@ Il cambio in OpenClaw si propone all'utente quando sono raggiunti i traguardi mi
 
 Aggiornare questa sezione a ogni passaggio di consegne.
 
-- **Ultimo aggiornamento**. 26/11/2026, Claude: prefill a 128 × 256 (`GGML_VK_TRELLIS_MM_BIG=1`, pp512 993, 32K 691) e confronto con HIP PR #8 (pp512 1229, tg64 31,8, pp4 62,9). A 1 token HIP è avanti per la fusione delle fasi dell'operazione, non per il prodotto: prossimo passo la fusione (vedi registro del 26/11).
+- **Ultimo aggiornamento**. 26/11/2026 sera, Claude: prefill 128 × 256 (`MM_BIG`), fusione delle fasi (`FUSE`), prodotto a 1 token più leggero (predefinito). Tabella di confronto con HIP PR #8 nel registro del 26/11. Con DFlash2 il ciclo non è cambiato: il margine residuo in generazione è nella verifica a 4 token e nella testa della bozza. HIP non può usare DFlash2 con NariQ (manca la condivisione di embedding e testa Trellis).
 - **Build di riferimento**. Per C8 usare `build/ref-bin` e verificare il commit con `llama-server --version`. Hadamard con `GGML_VK_TRELLIS_BLOCK_SHUFFLE=1` e prefill 256 con `GGML_VK_TRELLIS_MM_WIDE=1`. C7 (`09b633ca2`) è archiviata in `build/c8/ref-before-c8` e C6 (`60b4d242d`) in `build/c7/ref-before-c7`.
 - **Confronto iniziale in stile OpenClaw (D2, 25/11)**: `D:\Progetti\openclaw\tools\Run-Qwen38-VulkanAB.ps1 -Backends nariq-dflash3r,fork-dflash3r` con `OPENCLAW_AB_UB=512` (varianti `nariq` e `nariq-dflash3r` aggiunte allo script; la build NariQ si cambia con `OPENCLAW_AB_NARIQDIR`). Report `D:\Progetti\openclaw\runtime\benchmarks\20261124-212542-qwen38-backend-ab`. NariQ con DFlash2 3 token: generazione 25,4 / 23,9 / 25,6 t/s (breve / 32K / 65K), prefill 522 / 432, accettazione 35-44%, ciclo 84-90 ms, picco VRAM 14,96 GiB. Unsloth sul fork di produzione: 87,0 / 90,0 / 78,3, prefill 911 / 661, accettazione 44-55%, ciclo 27-32 ms, 14,06 GiB. **Su quella build NariQ DFlash2 rendeva poco**: un ciclo costa circa il doppio di un token (~41 ms) e produce ~2,1 token, quindi la generazione resta ~25 t/s come senza bozza. Senza bozza si risparmia anche ~1,3 GiB di VRAM.
 - **Dove sta il margine in generazione**: (1) il prodotto a 4 token (verifica) costa ~1,9 volte quello a 1 token: se scendesse a ~1,2 volte, con l'accettazione misurata DFlash2 darebbe ~40 t/s; (2) il prodotto a 1 token (~36 ms per token) limitato dal calcolo della decodifica (vedi "Valutazione onesta"). Entrambi dipendono dal costo della decodifica per peso, per questo la valutazione HIP (E1) è utile.
@@ -213,6 +213,27 @@ Obiettivo: sapere in poche ore se una build HIP di NariQ parte già meglio della
 ## Registro delle prove
 
 Voci più recenti in alto. Formato: data, chi, commit o "non committato", cosa, numeri (riferimento → candidato), esito.
+
+- **26/11/2026, Claude**: riepilogo della giornata, tutte le misure nella stessa sessione (VRAM libera 14,8 GB, nessun altro processo GPU). "Stamattina" = `build/ref-bin` (`48739f77c`, C8) con `Q8_PACKED`, `VERIFY_CM`, `MM_WIDE`, `BLOCK_SHUFFLE`; "ora" = `5ebe5f011` con in più `MM_BIG` e `FUSE`; HIP = PR #8 (worktree `pr8`, ROCm 10.2).
+
+  | llama-bench (cache q4_0, FA, b/ub 512) | Stamattina | Ora | HIP PR #8 |
+  | --- | ---: | ---: | ---: |
+  | pp512 | 720 | 946 | 1219 |
+  | pp512 a 32K | 546 | 693 | 772 |
+  | tg64 | 25,3 | 28,6 | 31,5 |
+  | tg64 a 32K | 23,9 | 27,7 | 27,3 |
+  | pp4 (batch della verifica a 4 token) | 75,2 | 76,6 | 62,4 |
+
+  | Server stile OpenClaw (chat reale, temperatura 1,0, cache come OpenClaw) | Stamattina | Ora | HIP PR #8 |
+  | --- | ---: | ---: | ---: |
+  | Prefill 2502 token | 470-480 | 534-550 | 997 |
+  | Prefill 27487 token | 596 | 742 | 1000 |
+  | Generazione breve con DFlash2 3 token (media 3 seed) | 44,4 (716/1305 accettati) | 40,5 (677/1426) | non disponibile |
+  | Ciclo DFlash2 | 59,7 ms | 59,8 ms | non disponibile |
+  | Generazione a ~27K con DFlash2 (1 run) | 41,2 | 41,3 | non disponibile |
+  | Generazione senza bozza (breve / ~27K) | | | 30,0 / 28,0 |
+
+  La differenza di generazione con DFlash2 tra stamattina e ora è rumore di accettazione (il ciclo costa uguale: la verifica a 4 token e la testa della bozza non sono cambiate oggi). Prove scartate oggi, archiviate in `build/f6`: prodotto a 1 token stile #7 in FP32 (`trellis_mv2`), prodotto int8 a 128 righe con ingressi in memoria condivisa (`trellis_mv8`, al meglio 94,9 contro 92,7 µs anche con k diviso fino a 8), estrazione degli stati con `bitfieldExtract` (invariato).
 
 - **26/11/2026, Claude**, commit di questa voce: prodotto int8 a 1 token dopo il confronto dell'ISA con HIP.
   - **Confronto ISA** (assembly gfx1201 di `trellis.cu` della PR #8, generato con il comando di build più `--offload-device-only -S`, in `scratchpad`): ciclo principale di `k_product_mv_v2<3,1>` 189 istruzioni VALU per 32 pesi per lane (32 `v_mul_lo_u32`, 34 `v_and`, 32 `v_sad_u8`, 24 `v_bfe`, ~32 FMA in parte doppie), cioè ~9 cicli per peso con la moltiplicazione a un quarto di velocità; il nostro `trellis_matvec_q8` ~11,6 cicli per peso: 9 `v_lshrrev` (lo spostamento `>> 2` dei byte), 10 addizioni per sommare i `dot4`, una moltiplicazione a 32 bit in più per il termine −126.
