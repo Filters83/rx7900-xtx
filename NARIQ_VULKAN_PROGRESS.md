@@ -224,6 +224,22 @@ Nel profilo A-B-B-A, sostituire temporaneamente il calcolo del valore dei pesi a
 
 [Registro delle prove](NARIQ_PIANO.md). Log locali in `build/c8`.
 
+## Confronto C8 con il profilo OpenClaw di produzione
+
+Test chat in streaming su RX 9070 con Unsloth Qwen3.8-27B UD-Q2_K_XL v3.1 su d4b007d e Qwen3.8-27B NariQ 3.0 bpw su 48739f77c. Entrambi riproducono il profilo del launcher con contesto 114.688, cache KV q4_0, Flash Attention, batch e microbatch 512, DFlash2 a tre token, thinking medium e proiettore su CPU. Modelli principali e draft su Vulkan0. I prompt lunghi contengono estratti identici di documentazione e sorgenti del fork. Una misura per caso, a livello di llama-server, con richieste testuali e seriali.
+
+| Richiesta | Token nuovi / in cache, Unsloth e C8 | Prefill t/s Unsloth / C8 | Prefill s Unsloth / C8 | Generazione t/s Unsloth / C8 | Primo token s Unsloth / C8 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Prompt breve | 153 / 0 | 109,03 / 70,66 | 1,40 / 2,17 | 104,45 / 50,50 | 1,42 / 2,17 |
+| 32K, cache fredda | 32.145 / 0 | 878,22 / 580,40 | 36,60 / 55,38 | 100,26 / 47,87 | 36,96 / 55,92 |
+| Follow-up a 32K | 53 / 32.141 | 44,64 / 27,97 | 1,19 / 1,89 | 81,28 / 46,95 | 1,24 / 1,93 |
+| 65K, cache fredda | 65.145 / 0 | 752,03 / 531,11 | 86,63 / 122,66 | 84,24 / 44,00 | 86,71 / 122,73 |
+| Risposta breve, budget 1.024 | 95 / 0 | 76,93 / 62,11 | 1,23 / 1,53 | 99,40 / 48,39 | 1,25 / 1,53 |
+
+Il primo token include il thinking e la generazione conta tutti i token prodotti dal modello. Nelle quattro prove principali entrambi i setup hanno esaurito il budget durante il thinking. Nella prova breve dedicata, Unsloth primo testo a 11,55 s, 1024 token in 11,55 s dall'invio e C8 primo testo a 19,26 s, 1024 token in 22,68 s dall'invio. Entrambe le risposte brevi hanno raggiunto il limite di 1.024 token.
+
+Picco VRAM dedicata del processo 12,74 GiB per Unsloth e 13,60 GiB per C8. Controlli dei processi, VRAM e log per richiesta in `build/d2-c8`. [Registro delle prove](NARIQ_PIANO.md)
+
 ## Riproduzione delle prove
 
 Da un nuovo checkout Windows x64 del branch, usare `scripts\build-vulkan-windows.cmd` con MSVC e Vulkan SDK. Lo script crea gli eseguibili in `build/bin`. Nel checkout locale qui sotto si usa la build già pronta in `build/packaging-x64/bin`. Sostituire `$build` con `'.\build'` dopo una compilazione tramite script. Eseguire dalla radice del repository, con il GGUF 3.0 bpw disponibile in `models`.
