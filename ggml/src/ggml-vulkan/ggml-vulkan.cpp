@@ -3385,6 +3385,9 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                     ggml_vk_create_pipeline(device, device->pipeline_trellis_mm_wide_cm1[i], "trellis_mm_wide_cm1",
                                             trellis_mm_wide_cm1_len, trellis_mm_wide_cm1_data, "main", 4, sizeof(vk_trellis_product),
                                             {64, 1, 1}, {i + 1}, 1, false, true, 32);
+                    ggml_vk_create_pipeline(device, device->pipeline_trellis_mm_big_cm1[i], "trellis_mm_big_cm1",
+                                            trellis_mm_big_cm1_len, trellis_mm_big_cm1_data, "main", 4, sizeof(vk_trellis_product),
+                                            {128, 1, 1}, {i + 1}, 1, false, true, 32);
                 }
             }
         }

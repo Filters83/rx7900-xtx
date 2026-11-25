@@ -380,12 +380,20 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
             // GGML_VK_TRELLIS_MM_RESIDUAL=1: also multiply the FP16 rounding residuals of the activations
             auto & fp16_product = ggml_vk_trellis_residual_enabled() && ctx->device->pipeline_trellis_mm_res_cm1[bits]
                                 ? ctx->device->pipeline_trellis_mm_res_cm1[bits] : ctx->device->pipeline_trellis_mm_cm1[bits];
-            auto & product = wide_chunk ? ctx->device->pipeline_trellis_mm_wide_cm1[bits] : fp16_product;
+            // GGML_VK_TRELLIS_MM_BIG=1: 128 outputs x 256 tokens per workgroup (trellis_mm_big.comp) for wide chunks of
+            // products with at least GGML_VK_TRELLIS_MM_BIG_MIN such workgroups (default 0)
+            static const bool big_enabled = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_MM_BIG"); return opt && std::strcmp(opt, "1") == 0; }();
+            static const uint32_t big_min_groups = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_MM_BIG_MIN"); return opt ? uint32_t(std::atoi(opt)) : 0u; }();
+            const bool big = wide_chunk && big_enabled && ctx->device->pipeline_trellis_mm_big_cm1[bits] &&
+                             CEIL_DIV(n, 128) >= big_min_groups;
+            auto & product = big ? ctx->device->pipeline_trellis_mm_big_cm1[bits] :
+                             wide_chunk ? ctx->device->pipeline_trellis_mm_wide_cm1[bits] : fp16_product;
             ggml_pipeline_request_descriptor_sets(ctx, product, 1);
             // few outputs (the 48-row delta-net projections: 2 workgroups): split k as in the int8 product
-            const uint32_t groups = CEIL_DIV(n, 64), tiles = k / 16;
+            const uint32_t groups = CEIL_DIV(n, big ? 128 : 64), tiles = k / 16;
+            static const uint32_t big_split_below = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_MM_BIG_SPLIT"); return opt ? uint32_t(std::atoi(opt)) : 56u; }();
             uint32_t splits = 1;
-            if (groups < 32) {
+            if (groups < (big ? big_split_below : 32u)) {
                 splits = std::min<uint32_t>({ 16, CEIL_DIV(64, groups), tiles / 16, uint32_t(stride / (sizeof(float) * n * batch)) });
                 splits = std::max<uint32_t>(splits, 1);
             }
