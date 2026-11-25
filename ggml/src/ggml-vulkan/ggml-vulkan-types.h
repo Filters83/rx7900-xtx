@@ -872,6 +872,7 @@ struct vk_device_struct {
     vk_pipeline pipeline_group_norm_f32;
     vk_pipeline pipeline_trellis_input, pipeline_trellis_output, pipeline_trellis_store_rows;
     vk_pipeline pipeline_trellis_block, pipeline_trellis_butterfly, pipeline_trellis_cross;
+    vk_pipeline pipeline_trellis_block_shuffle;
     vk_pipeline pipeline_trellis_matvec[6], pipeline_trellis_matmul[6], pipeline_trellis_decode_rows[6];
     vk_pipeline pipeline_trellis_matvec_q8[6], pipeline_trellis_matvec_q8x4[6], pipeline_trellis_quant, pipeline_trellis_reduce;
     vk_pipeline pipeline_trellis_matvec_q8x4_packed[6], pipeline_trellis_quant_packed;

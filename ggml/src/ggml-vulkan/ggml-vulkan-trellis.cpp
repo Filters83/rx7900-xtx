@@ -206,7 +206,13 @@ static void ggml_vk_trellis_side(ggml_backend_vk_context * ctx, vk_context & sub
 
     const float norm = 1.0 / std::sqrt(double(pc.run));
     if (pc.m == 1 && pc.nparts == 0 && pc.len <= VK_TRELLIS_BLOCK_LIMIT) {
-        auto & pipeline = ctx->device->pipeline_trellis_block;
+        static const bool shuffle = [] {
+            const char * opt = std::getenv("GGML_VK_TRELLIS_BLOCK_SHUFFLE");
+            return opt && std::strcmp(opt, "1") == 0;
+        }();
+        auto & shuffle_block = ctx->device->pipeline_trellis_block_shuffle;
+        const bool use_shuffle = shuffle && batch >= 16 && pc.len >= 32 && pc.len % 32 == 0 && shuffle_block;
+        auto & pipeline = use_shuffle ? shuffle_block : ctx->device->pipeline_trellis_block;
         pc.scale = norm;
         ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
         ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { values }, pc, { pc.shards, batch, 1 });

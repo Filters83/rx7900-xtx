@@ -201,6 +201,17 @@ Il dispatch usa questo percorso per blocchi completi e torna al kernel da 128 pe
 
 pp512 615,46 → 696,46 (+13,2%), pp8192 588,70 → 667,32 (+13,4%), pp512 a profondità 32768 444,14 → 529,35 (+19,2%) t/s. Nei due confronti tg64 ha misurato 25,55 → 24,70 t/s nel breve e 21,51 → 22,24 t/s a profondità 32768. Picco dedicato a 32K 11,86 → 11,84 GiB. WikiText-2 40 finestre PPL 6,2456 → 6,2456. In una finestra da 385 token contro CPU, con coda dopo il blocco da 256, stesso top-1 (100,000%) e stessa KL massima a sei decimali (0,000037). Vulkan 416/416 e CTest 4/4. [Registro delle prove](NARIQ_PIANO.md)
 
+## Hadamard nei sottogruppi per il prefill
+
+C7 calcola le prime cinque tappe di Hadamard con `subgroupShuffleXor` nei sottogruppi da 32. Le tappe successive riusano la memoria condivisa, mantenendo l'ordine delle somme e delle sottrazioni. Si applica in prefill alle rotazioni a blocchi allineati a 32 su dispositivi con il supporto Vulkan richiesto. Per provarlo con il percorso C6 impostare entrambe le variabili.
+
+```powershell
+$env:GGML_VK_TRELLIS_MM_WIDE = '1'
+$env:GGML_VK_TRELLIS_BLOCK_SHUFFLE = '1'
+```
+
+pp512 713,00 → 725,61 (+1,8%), pp8192 674,01 → 705,90 (+4,7%), pp512 a profondità 32768 478,03 → 482,66 (+1,0%) t/s. Vulkan 416/416 e CTest 4/4. WikiText-2 40 finestre PPL 6,2456. A 385 token contro CPU, top-1 100% e KL massima 0,000037, come C6. La fusione di SwiGLU con la preparazione e Hadamard del down ha attivato 64/64 coppie, ma ha dato -1,35% su pp512 e +1,61% su pp8192. Il prototipo è archiviato in build/c7. [Registro delle prove](NARIQ_PIANO.md)
+
 ## Riproduzione delle prove
 
 Da un nuovo checkout Windows x64 del branch, usare `scripts\build-vulkan-windows.cmd` con MSVC e Vulkan SDK. Lo script crea gli eseguibili in `build/bin`. Nel checkout locale qui sotto si usa la build già pronta in `build/packaging-x64/bin`. Sostituire `$build` con `'.\build'` dopo una compilazione tramite script. Eseguire dalla radice del repository, con il GGUF 3.0 bpw disponibile in `models`.

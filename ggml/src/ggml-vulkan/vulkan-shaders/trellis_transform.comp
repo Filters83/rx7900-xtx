@@ -1,5 +1,11 @@
 #version 450
 
+#ifdef TRELLIS_BLOCK_SHUFFLE
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_EXT_control_flow_attributes : require
+#endif
+
 layout(local_size_x = 256) in;
 layout(binding = 0) buffer Vectors { float values[]; };
 #ifdef TRELLIS_CROSS
@@ -24,13 +30,28 @@ const uint BLOCK_LIMIT = 4096;
 shared float block_values[BLOCK_LIMIT];
 
 void main() {
+#ifdef TRELLIS_BLOCK_SHUFFLE
+    const uint tid = 32 * gl_SubgroupID + gl_SubgroupInvocationID;
+    const uint first_step = 32;
+#else
     const uint tid = gl_LocalInvocationID.x;
+    const uint first_step = 1;
+#endif
     const uint base = gl_WorkGroupID.y * p.width + gl_WorkGroupID.x * p.len;
     for (uint i = tid; i < p.len; i += gl_WorkGroupSize.x) {
+#ifdef TRELLIS_BLOCK_SHUFFLE
+        float value = values[base + i];
+        [[unroll]] for (uint step = 1; step < 32; step *= 2) {
+            const float other = subgroupShuffleXor(value, step);
+            value = (i & step) == 0 ? value + other : other - value;
+        }
+        block_values[i] = value;
+#else
         block_values[i] = values[base + i];
+#endif
     }
     barrier();
-    for (uint step = 1; step < p.len; step *= 2) {
+    for (uint step = first_step; step < p.len; step *= 2) {
         for (uint j = tid; j < p.len / 2; j += gl_WorkGroupSize.x) {
             const uint i = (j / step) * (2 * step) + j % step;
             const float x = block_values[i];

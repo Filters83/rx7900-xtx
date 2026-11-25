@@ -12,12 +12,12 @@ Motivo: secondo il rapporto tecnico di Nari Labs (arXiv 2611.26157, tabella 3), 
 
 Riferimento: setup OpenClaw attuale, fork `d4b007d` con Unsloth UD-Q2_K_XL, DFlash2 3 token, cache q4_0, contesto 114688, ubatch 512.
 
-| Misura | Unsloth attuale | NariQ B6, 25/11 | Traguardo minimo | Traguardo pieno |
+| Misura | Unsloth attuale | NariQ Vulkan, 25/11 | Traguardo minimo | Traguardo pieno |
 | --- | ---: | ---: | ---: | ---: |
 | Generazione senza bozza, llama-bench tg | ~39 t/s | ~25 t/s (B2) | 30 | 39 |
 | Generazione con DFlash2, contesto breve | 87 t/s (D2, confronto precedente) | 37,23 t/s (D2) | 55 | 75 |
 | Generazione con DFlash2 a 65K | 78 t/s (D2, confronto precedente) | 39,90 t/s (D2) | 50 | 70 |
-| Prefill a 32K | ~910 t/s (llama-bench d32768: 766) | 529,35 t/s (B3, 512 token con prefisso in cache) | 450 | 800 |
+| Prefill a 32K | ~910 t/s (llama-bench d32768: 766) | 482,66 t/s (B3, 512 token con prefisso in cache) | 450 | 800 |
 | VRAM di picco, OpenClaw completo | 14,1-14,5 GiB | 13,65 GiB D2 testuale con DFlash2. Profilo completo da verificare. | ≤ 14,5 GiB | ≤ 14,5 GiB |
 | Qualità | | Logits identici al dot4. CPU 31/31 top-1, KL max 2,10e-4. | CPU top-1 31/31, KL < 1e-6 | idem |
 
@@ -27,8 +27,8 @@ Il cambio in OpenClaw si propone all'utente quando sono raggiunti i traguardi mi
 
 Aggiornare questa sezione a ogni passaggio di consegne.
 
-- **Ultimo aggiornamento**. 25/11/2026, Codex, C6 prefill FP16 a 256 token validato.
-- **Build di riferimento**. `build/ref-bin` contiene la build C6, verificabile con `llama-server --version`. Prefill a 256 token con `GGML_VK_TRELLIS_MM_WIDE=1`. La precedente build B6 è archiviata in `build/c6/ref-before-c6` (`10339c849`).
+- **Ultimo aggiornamento**. 25/11/2026, Codex, C7 Hadamard con subgroup shuffle validato.
+- **Build di riferimento**. `build/ref-bin` contiene la build C7, verificabile con `llama-server --version`. Hadamard con `GGML_VK_TRELLIS_BLOCK_SHUFFLE=1` e prefill 256 con `GGML_VK_TRELLIS_MM_WIDE=1`. La build C6 è archiviata in `build/c7/ref-before-c7` (`60b4d242d`).
 - **Confronto iniziale in stile OpenClaw (D2, 25/11)**: `D:\Progetti\openclaw\tools\Run-Qwen38-VulkanAB.ps1 -Backends nariq-dflash3r,fork-dflash3r` con `OPENCLAW_AB_UB=512` (varianti `nariq` e `nariq-dflash3r` aggiunte allo script; la build NariQ si cambia con `OPENCLAW_AB_NARIQDIR`). Report `D:\Progetti\openclaw\runtime\benchmarks\20261124-212542-qwen38-backend-ab`. NariQ con DFlash2 3 token: generazione 25,4 / 23,9 / 25,6 t/s (breve / 32K / 65K), prefill 522 / 432, accettazione 35-44%, ciclo 84-90 ms, picco VRAM 14,96 GiB. Unsloth sul fork di produzione: 87,0 / 90,0 / 78,3, prefill 911 / 661, accettazione 44-55%, ciclo 27-32 ms, 14,06 GiB. **Su quella build NariQ DFlash2 rendeva poco**: un ciclo costa circa il doppio di un token (~41 ms) e produce ~2,1 token, quindi la generazione resta ~25 t/s come senza bozza. Senza bozza si risparmia anche ~1,3 GiB di VRAM.
 - **Dove sta il margine in generazione**: (1) il prodotto a 4 token (verifica) costa ~1,9 volte quello a 1 token: se scendesse a ~1,2 volte, con l'accettazione misurata DFlash2 darebbe ~40 t/s; (2) il prodotto a 1 token (~36 ms per token) limitato dal calcolo della decodifica (vedi "Valutazione onesta"). Entrambi dipendono dal costo della decodifica per peso, per questo la valutazione HIP (E1) è utile.
 - **Ultimi risultati**: generazione senza bozza 17,5 → 24,9 t/s; con DFlash2 a 3 token ~41 t/s sul prompt ripetitivo di prova (prima ~10). **Prefill (C3) 150 → ~602 t/s a contesto vuoto, 147 → 472 a 32K** (llama-bench): traguardo minimo del prefill raggiunto. Il percorso cooperativo è ora predefinito (`GGML_VK_TRELLIS_COOPMAT=0` per disattivarlo): non serve più impostare la variabile.
@@ -48,7 +48,8 @@ Aggiornare questa sezione a ogni passaggio di consegne.
 - **[HIP] E1 conclusa**: su RX 9070 con ROCm 10.2.0, PR #3 `f52affb46` e DLL del venv, B2 224,14 / 8,01 t/s e B3 a profondità 32.768 213,77 / 7,98 t/s (prefill / generazione). CTest 2/2, TRL1–6 e 380/380 prodotti passati; modello 31/31 top-1 a microbatch 1 e 32. I 65/65 layer sono su ROCm0, l'embedding Trellis resta su CPU. Nessuna delle soglie E1 è raggiunta. Raccomandazione: fermare l'ottimizzazione HIP e sottoporre all'utente il prossimo passo.
 - **[HIP] Profilo prefill concluso**: unpack + GEMM pesano l'83,1% nel prefill breve e il 75,1% a profondità 32.768. A 32K il prefill profilato è 212,25 t/s. L'intervento con più margine è un prototipo WMMA RDNA4 che sostituisca entrambe le fasi, con validazione e soglie E1. Per 550 t/s servirebbe circa 5,5 volte sul blocco a parità degli altri tempi. Piano in `D:\Progetti\NariQ HIP RDNA4\NARIQ_HIP_OPTIMIZATION.md`. Il prototipo di ottimizzazione resta da provare.
 - **C6 validata**. INT8 a un termine 759 t/s su pp512 e 242/416 test. INT8 con residuo 537 t/s e 416/416. Il percorso accettato usa FP16 a 256 token per riusare più a lungo la decodifica dei pesi. pp512 615,46 → 696,46 (+13,2%), pp8192 588,70 → 667,32 (+13,4%), pp512 a profondità 32768 444,14 → 529,35 (+19,2%) t/s. Picco dedicato B3 11,86 → 11,84 GiB. WikiText-2 40 finestre PPL 6,2456 → 6,2456. In una finestra da 385 token contro CPU, con coda dopo il blocco da 256, stesso top-1 (100,000%) e stessa KL massima a sei decimali (0,000037). Vulkan 416/416 e CTest 4/4.
-- **Prossimo passo**. B5 per la generazione con DFlash2 e C7 per il prefill. Per C7 profilare le proiezioni gate/up e le trasformazioni SwiGLU/Hadamard, poi valutare la fusione a partire dal percorso FP16 validato. [Nari Labs #5](https://github.com/nari-labs/nari-llama.cpp/pull/5)
+- **C7 validata**. Hadamard a blocchi con le prime cinque tappe nei sottogruppi da 32. Nel profilo il totale delle rotazioni va da 101,77 a 70,25 ms. pp512 713,00 → 725,61 (+1,8%), pp8192 674,01 → 705,90 (+4,7%), pp512 a profondità 32768 478,03 → 482,66 (+1,0%) t/s. Vulkan 416/416 e CTest 4/4. WikiText-2 40 finestre PPL 6,2456. A 385 token contro CPU, top-1 100% e KL massima 0,000037, come C6. La fusione di SwiGLU con la preparazione e Hadamard del down ha attivato 64/64 coppie, ma ha dato -1,35% su pp512 e +1,61% su pp8192. Il prototipo è archiviato in build/c7.
+- **Prossimo passo**. B5 per la generazione con DFlash2. Per il prefill, C8 sul prodotto Trellis, che occupa circa 531 ms su 750 nel grafo caldo di riferimento. Misurare il costo di decodifica dei pesi per tile e valutare il riuso delle due parole di stato nel prodotto FP16.
 - **Script di prova del server**: lo scratchpad di Claude non è condiviso. Per una prova equivalente avviare `build\bin\llama-server.exe` con gli argomenti dell'esempio in `NARIQ_VULKAN_PROGRESS.md` più `--spec-type draft-dflash --spec-draft-model D:\Progetti\openclaw\models\qwen38-27b-dflash2\Qwen3.8-27B-DFlash2-Q4_K_M.gguf --spec-draft-device Vulkan0 --spec-draft-ngl 99 --spec-draft-type-k q4_0 --spec-draft-type-v q4_0 --spec-draft-n-max 3 --spec-accept rejection -bs --spec-draft-vocab 65536`, `-c 32768 -ub 512`, e inviare a `/completion` un prompt di ~1500 token con `n_predict` 256; leggere `timings.predicted_per_second`, `draft_n`, `draft_n_accepted`.
 
 ## Regole di lavoro
@@ -148,7 +149,8 @@ Stato: `da fare`, `in corso (chi)`, `fatto`, `scartato`. Le stime di guadagno so
 | C5 | Prodotto cooperativo: forma del gruppo di lavoro | fatto (`71b71362e`) | 64 righe × 32 input per passo, migliore di 2×4, 4×4, 4×1, 8×1, 8×2 (vedi registro); k diviso per le proiezioni da 48 righe |
 | C4 | Attenzione del prefill: verificare che la cache q4_0 usi la conversione f16 (`74856e4`) anche con NariQ | da fare | Comune ai due modelli |
 | C6 | Valutazione prefill INT8 e riuso pesi FP16 | Completato, FP16 a 256 opt-in | INT8 a un termine fuori tolleranza e a due termini più lento. pp512 615,46 → 696,46 (+13,2%), pp8192 588,70 → 667,32 (+13,4%), pp512 a profondità 32768 444,14 → 529,35 (+19,2%) t/s. |
-| C7 | Profilare e valutare la fusione MLP Trellis in prefill | da fare | Misurare il tempo gate/up, SwiGLU e Hadamard prima di modificare il grafo. [Nari Labs #5](https://github.com/nari-labs/nari-llama.cpp/pull/5) |
+| C7 | Profilo e ottimizzazione di SwiGLU/Hadamard | Hadamard opt-in validata | pp512 713,00 → 725,61 (+1,8%), pp8192 674,01 → 705,90 (+4,7%), pp512 a profondità 32768 478,03 → 482,66 (+1,0%) t/s. Fusione SwiGLU archiviata dopo A-B-B-A. |
+| C8 | Profilare e ottimizzare la decodifica dei pesi nel prefill | da fare | Misurare il contributo della decodifica sul prodotto FP16 e provare il riuso delle parole di stato già validato per altri kernel. |
 
 ### Fase D: integrazione in OpenClaw
 
@@ -191,6 +193,124 @@ Obiettivo: sapere in poche ore se una build HIP di NariQ parte già meglio della
 ## Registro delle prove
 
 Voci più recenti in alto. Formato: data, chi, commit o "non committato", cosa, numeri (riferimento → candidato), esito.
+
+- **25/11/2026, Codex**, C7 finale. pp512 713,00 → 725,61 (+1,8%), pp8192 674,01 → 705,90 (+4,7%), pp512 a profondità 32768 478,03 → 482,66 (+1,0%) t/s. tg64 25,13 → 25,33 nel breve e 21,55 → 22,20 a profondità 32768. Vulkan 416/416 e CTest 4/4. WikiText-2 40 finestre PPL 6,2456. A 385 token contro CPU, top-1 100% e KL massima 0,000037, come C6. Il log ISA conferma lo shader `trellis_block_shuffle` sul modello. Esito: accettato come opt-in. Log `build/c7/*-final-*` e `ppl-b-final.*`.
+
+- **25/11/2026, Codex**, C7 ppl-b-final. 0.07.532.481 I perplexity: 1.08 seconds per pass - ETA 0.37.487.347 I Final estimate: PPL = 6.2456 +/- 0.14665 Exit 0. Processi concorrenti assenti e 14.473 GiB stimati liberi. Log build/c7/ppl-b-final.
+
+- **25/11/2026, Codex**, C7 deep-a-final-2. pp512/tg0 d32768 476.58 t/s, pp0/tg64 d32768 21.56 t/s Exit 0. Processi concorrenti assenti e 14.399 GiB stimati liberi. Log build/c7/deep-a-final-2.
+
+- **25/11/2026, Codex**, C7 deep-b-final-2. pp512/tg0 d32768 490.17 t/s, pp0/tg64 d32768 22.14 t/s Exit 0. Processi concorrenti assenti e 14.499 GiB stimati liberi. Log build/c7/deep-b-final-2.
+
+- **25/11/2026, Codex**, C7 deep-b-final-1. pp512/tg0 d32768 475.15 t/s, pp0/tg64 d32768 22.26 t/s Exit 0. Processi concorrenti assenti e 14.67 GiB stimati liberi. Log build/c7/deep-b-final-1.
+
+- **25/11/2026, Codex**, C7 deep-a-final-1. pp512/tg0 d32768 479.49 t/s, pp0/tg64 d32768 21.54 t/s Exit 0. Processi concorrenti assenti e 14.674 GiB stimati liberi. Log build/c7/deep-a-final-1.
+
+- **25/11/2026, Codex**, C7 pp8192-a-final-2. pp8192/tg0 d0 673.91 t/s Exit 0. Processi concorrenti assenti e 14.674 GiB stimati liberi. Log build/c7/pp8192-a-final-2.
+
+- **25/11/2026, Codex**, C7 pp8192-b-final-2. pp8192/tg0 d0 717.59 t/s Exit 0. Processi concorrenti assenti e 14.674 GiB stimati liberi. Log build/c7/pp8192-b-final-2.
+
+- **25/11/2026, Codex**, C7 pp8192-b-final-1. pp8192/tg0 d0 694.21 t/s Exit 0. Processi concorrenti assenti e 14.67 GiB stimati liberi. Log build/c7/pp8192-b-final-1.
+
+- **25/11/2026, Codex**, C7 pp8192-a-final-1. pp8192/tg0 d0 674.11 t/s Exit 0. Processi concorrenti assenti e 14.673 GiB stimati liberi. Log build/c7/pp8192-a-final-1.
+
+- **25/11/2026, Codex**, C7 short-a-final-2. pp512/tg0 d0 722.16 t/s, pp0/tg64 d0 25.48 t/s Exit 0. Processi concorrenti assenti e 14.666 GiB stimati liberi. Log build/c7/short-a-final-2.
+
+- **25/11/2026, Codex**, C7 short-b-final-2. pp512/tg0 d0 745.95 t/s, pp0/tg64 d0 25.33 t/s Exit 0. Processi concorrenti assenti e 14.669 GiB stimati liberi. Log build/c7/short-b-final-2.
+
+- **25/11/2026, Codex**, C7 short-b-final-1. pp512/tg0 d0 705.26 t/s, pp0/tg64 d0 25.33 t/s Exit 0. Processi concorrenti assenti e 14.66 GiB stimati liberi. Log build/c7/short-b-final-1.
+
+- **25/11/2026, Codex**, C7 short-a-final-1. pp512/tg0 d0 703.83 t/s, pp0/tg64 d0 24.78 t/s Exit 0. Processi concorrenti assenti e 14.67 GiB stimati liberi. Log build/c7/short-a-final-1.
+
+- **25/11/2026, Codex**, C7 kld-b-final. Maximum KLD:   0.000037 | Same top p: 100.000 ± 0.000 % Exit 0. Processi concorrenti assenti e 14.67 GiB stimati liberi. Log build/c7/kld-b-final.
+
+- **25/11/2026, Codex**, C7 ctest-b-final. 100% tests passed, 0 tests failed out of 4 Exit 0. Processi concorrenti assenti e 14.666 GiB stimati liberi. Log build/c7/ctest-b-final.
+
+- **25/11/2026, Codex**, C7 ops-b-final.   416/416 tests passed Exit 0. Processi concorrenti assenti e 14.659 GiB stimati liberi. Log build/c7/ops-b-final.
+
+- **25/11/2026, Codex**, C7 Hadamard subgroup A-B-B-A. pp512 703,92 → 725,62 t/s (+3,08%), 416/416. Profilo ingresso + uscita Hadamard 101,77 → 70,25 ms nel grafo caldo. Archiviate le varianti SwiGLU. Consolidare solo Hadamard e ripetere misure e qualità.
+
+- **25/11/2026, Codex**, C7 short-a-shuffle-2. pp512/tg0 d0 719.9 t/s, pp0/tg64 d0 24.6 t/s Exit 0. Processi concorrenti assenti e 14.663 GiB stimati liberi. Log build/c7/short-a-shuffle-2.
+
+- **25/11/2026, Codex**, C7 short-b-shuffle-2. pp512/tg0 d0 712.82 t/s, pp0/tg64 d0 25.49 t/s Exit 0. Processi concorrenti assenti e 14.668 GiB stimati liberi. Log build/c7/short-b-shuffle-2.
+
+- **25/11/2026, Codex**, C7 short-b-shuffle-1. pp512/tg0 d0 738.41 t/s, pp0/tg64 d0 24.51 t/s Exit 0. Processi concorrenti assenti e 14.662 GiB stimati liberi. Log build/c7/short-b-shuffle-1.
+
+- **25/11/2026, Codex**, C7 short-a-shuffle-1. pp512/tg0 d0 687.94 t/s, pp0/tg64 d0 24.66 t/s Exit 0. Processi concorrenti assenti e 14.662 GiB stimati liberi. Log build/c7/short-a-shuffle-1.
+
+- **25/11/2026, Codex**, C7 profile-short-shuffle. Profilo C6 wide con pp512, exit 0. Nessun processo concorrente e 14.665 GiB di VRAM stimati liberi. Log build/c7/profile-short-shuffle.
+
+- **25/11/2026, Codex**, C7 ops-b-shuffle.   416/416 tests passed Exit 0. Processi concorrenti assenti e 14.661 GiB stimati liberi. Log build/c7/ops-b-shuffle.
+
+- **25/11/2026, Codex**, C7 build Hadamard subgroup. Build Windows e spirv-val riusciti. Le prime cinque tappe Hadamard da 32 valori passano per subgroupShuffleXor, le altre riprendono nella memoria condivisa. Fusione SwiGLU disattivata in questa prova.
+
+- **25/11/2026, Codex**, C7 pp8192 della fusione. Fusione con scheduler a 8192: 670,02 → 680,78 t/s (+1,61%) in A-B-B-A, GPU dedicata invariata. KLD contro CPU su 385 token uguale a C6: top-1 100%, KL max 0,000037. Il breve resta -1,35%. Provare Hadamard con scambi nei sottogruppi, a fusione SwiGLU disattivata.
+
+- **25/11/2026, Codex**, C7 kld-b-scheduled. Maximum KLD:   0.000037 | Same top p: 100.000 ± 0.000 % Exit 0. Processi concorrenti assenti e 14.586 GiB stimati liberi. Log build/c7/kld-b-scheduled.
+
+- **25/11/2026, Codex**, C7 pp8192-a-scheduled-2. pp8192/tg0 d0 667.64 t/s Exit 0. Processi concorrenti assenti e 14.582 GiB stimati liberi. Log build/c7/pp8192-a-scheduled-2.
+
+- **25/11/2026, Codex**, C7 pp8192-b-scheduled-2. pp8192/tg0 d0 679.96 t/s Exit 0. Processi concorrenti assenti e 14.588 GiB stimati liberi. Log build/c7/pp8192-b-scheduled-2.
+
+- **25/11/2026, Codex**, C7 pp8192-b-scheduled-1. pp8192/tg0 d0 681.59 t/s Exit 0. Processi concorrenti assenti e 14.579 GiB stimati liberi. Log build/c7/pp8192-b-scheduled-1.
+
+- **25/11/2026, Codex**, C7 pp8192-a-scheduled-1. pp8192/tg0 d0 672.39 t/s Exit 0. Processi concorrenti assenti e 14.581 GiB stimati liberi. Log build/c7/pp8192-a-scheduled-1.
+
+- **25/11/2026, Codex**, C7 fusione completa su pp512. Lo scheduler tiene adiacenti i nodi e mantiene vivi gli ingressi con dipendenze di allocazione. Il profilo conferma 64/64 fusioni, buffer di calcolo 1444,52 MiB per entrambe le build. Ultimo grafo 750,19 → 740,50 ms, ma il benchmark breve A-B-B-A dà 704,31 → 694,82 t/s (-1,35%). Vulkan 416/416. Provare pp8192 per misurare su carico più lungo.
+
+- **25/11/2026, Codex**, C7 short-a-scheduled-2. pp512/tg0 d0 717.42 t/s, pp0/tg64 d0 24.63 t/s Exit 0. Processi concorrenti assenti e 14.586 GiB stimati liberi. Log build/c7/short-a-scheduled-2.
+
+- **25/11/2026, Codex**, C7 short-b-scheduled-2. pp512/tg0 d0 693.79 t/s, pp0/tg64 d0 24.56 t/s Exit 0. Processi concorrenti assenti e 14.585 GiB stimati liberi. Log build/c7/short-b-scheduled-2.
+
+- **25/11/2026, Codex**, C7 short-b-scheduled-1. pp512/tg0 d0 695.84 t/s, pp0/tg64 d0 24.57 t/s Exit 0. Processi concorrenti assenti e 14.58 GiB stimati liberi. Log build/c7/short-b-scheduled-1.
+
+- **25/11/2026, Codex**, C7 short-a-scheduled-1. pp512/tg0 d0 691.2 t/s, pp0/tg64 d0 24.71 t/s Exit 0. Processi concorrenti assenti e 14.584 GiB stimati liberi. Log build/c7/short-a-scheduled-1.
+
+- **25/11/2026, Codex**, C7 profile-short-fused-scheduled. Profilo C6 wide con pp512, exit 0. Nessun processo concorrente e 14.58 GiB di VRAM stimati liberi. Log build/c7/profile-short-fused-scheduled.
+
+- **25/11/2026, Codex**, C7 ops-b-scheduled.   416/416 tests passed Exit 0. Processi concorrenti assenti e 14.589 GiB stimati liberi. Log build/c7/ops-b-scheduled.
+
+- **25/11/2026, Codex**, C7 seconda fusione A-B-B-A. 17/64 coppie anche con alias sicuro. A-B-B-A 706,45 → 708,87 t/s (+0,34%), 416/416. Rimosso il permesso di alias sperimentale. Ora si usa il meccanismo Vulkan esistente per tenere adiacenti i due nodi e mantenere vivi gli ingressi fino all'uscita.
+
+- **25/11/2026, Codex**, C7 short-a-prefix-2. pp512/tg0 d0 689.48 t/s, pp0/tg64 d0 25.37 t/s Exit 0. Processi concorrenti assenti e 14.588 GiB stimati liberi. Log build/c7/short-a-prefix-2.
+
+- **25/11/2026, Codex**, C7 short-b-prefix-2. pp512/tg0 d0 704.45 t/s, pp0/tg64 d0 24.49 t/s Exit 0. Processi concorrenti assenti e 14.588 GiB stimati liberi. Log build/c7/short-b-prefix-2.
+
+- **25/11/2026, Codex**, C7 short-b-prefix-1. pp512/tg0 d0 713.29 t/s, pp0/tg64 d0 24.58 t/s Exit 0. Processi concorrenti assenti e 14.577 GiB stimati liberi. Log build/c7/short-b-prefix-1.
+
+- **25/11/2026, Codex**, C7 short-a-prefix-1. pp512/tg0 d0 723.41 t/s, pp0/tg64 d0 25.44 t/s Exit 0. Processi concorrenti assenti e 14.579 GiB stimati liberi. Log build/c7/short-a-prefix-1.
+
+- **25/11/2026, Codex**, C7 profile-short-fused-prefix. Profilo C6 wide con pp512, exit 0. Nessun processo concorrente e 14.582 GiB di VRAM stimati liberi. Log build/c7/profile-short-fused-prefix.
+
+- **25/11/2026, Codex**, C7 ops-b-prefix.   416/416 tests passed Exit 0. Processi concorrenti assenti e 14.582 GiB stimati liberi. Log build/c7/ops-b-prefix.
+
+- **25/11/2026, Codex**, C7 verifica con alias sicuro. Il confronto dei tensori nel GGUF trova pre e s16 diversi in 64/64 coppie gate/up. Nessuna coppia può riusare identica la preparazione di ingresso. Build Release riuscita per la variante che consente l'alias dimostrato sicuro.
+
+- **25/11/2026, Codex**, C7 prima fusione A-B-B-A. 17 coppie fuse su 64 nel modello e 416/416. pp512 702,77 → 708,77 t/s (+0,85%), con ampia oscillazione. Il profilo scende da 750,19 a 744,96 ms nell'ultimo grafo. Prova successiva consente l'alias solo se il prefisso già scritto del down non può sovrascrivere i valori di gate/up ancora da leggere.
+
+- **25/11/2026, Codex**, C7 short-a-2. pp512/tg0 d0 704.96 t/s, pp0/tg64 d0 24.67 t/s Exit 0. Processi concorrenti assenti e 14.584 GiB stimati liberi. Log build/c7/short-a-2.
+
+- **25/11/2026, Codex**, C7 short-b-2. pp512/tg0 d0 690.88 t/s, pp0/tg64 d0 24.61 t/s Exit 0. Processi concorrenti assenti e 14.585 GiB stimati liberi. Log build/c7/short-b-2.
+
+- **25/11/2026, Codex**, C7 short-b-1. pp512/tg0 d0 726.66 t/s, pp0/tg64 d0 25.5 t/s Exit 0. Processi concorrenti assenti e 14.589 GiB stimati liberi. Log build/c7/short-b-1.
+
+- **25/11/2026, Codex**, C7 short-a-1. pp512/tg0 d0 700.57 t/s, pp0/tg64 d0 25.46 t/s Exit 0. Processi concorrenti assenti e 14.581 GiB stimati liberi. Log build/c7/short-a-1.
+
+- **25/11/2026, Codex**, C7 profile-short-fused. Profilo C6 wide con pp512, exit 0. Nessun processo concorrente e 14.586 GiB di VRAM stimati liberi. Log build/c7/profile-short-fused.
+
+- **25/11/2026, Codex**, C7 ops-b.   416/416 tests passed Exit 0. Processi concorrenti assenti e 14.577 GiB stimati liberi. Log build/c7/ops-b.
+
+- **25/11/2026, Codex**, C7 build fusione. SPIR-V e build Windows Release riusciti. La fusione riutilizza il blocco Hadamard e lascia i prodotti e le rotazioni di uscita nei kernel esistenti. In verifica profilo e risultati Vulkan.
+
+- **25/11/2026, Codex**, C7 profilo a 32K. Dopo il prefisso da 32768, ultimo grafo pp512 profilato: 1126,78 ms, SwiGLU 11,75 ms, Hadamard intra-Trellis 77,01 ms ingresso e 40,22 ms uscita. Per la larghezza MLP di 17408, Hadamard a 17 blocchi da 1024. Prototipo limitato a SwiGLU split con prodotti Trellis e Hadamard a blocchi del down.
+
+- **25/11/2026, Codex**, C7 profile-32k. Profilo C6 wide con pp512, exit 0. Nessun processo concorrente e 13.759 GiB di VRAM stimati liberi. Log build/c7/profile-32k.
+
+- **25/11/2026, Codex**, C7 profilo breve. Su 512 token, seconda esecuzione profilata: 750,19 ms GPU, 128 prodotti gate/up 266,33 ms inclusi input/uscita, 64 prodotti down 167,75 ms, 64 SwiGLU 11,70 ms. Hadamard intra-Trellis 68,86 ms ingresso e 32,91 ms uscita per tutti i prodotti. Provare fusione mirata di SwiGLU, preparazione e Hadamard di ingresso del down.
+
+- **25/11/2026, Codex**, C7 profile-short. Profilo C6 wide con pp512, exit 0. Nessun processo concorrente e 14.338 GiB di VRAM stimati liberi. Log build/c7/profile-short.
+
+- **25/11/2026, Codex**, C7 avvio. Riferimento C6 60b4d242d. Profilare il prefill con wide=1 e misurare le componenti MLP prima di scegliere la fusione.
 
 - **25/11/2026, Codex**, C6 finale. pp512 615,46 → 696,46 (+13,2%), pp8192 588,70 → 667,32 (+13,4%), pp512 a profondità 32768 444,14 → 529,35 (+19,2%) t/s. Vulkan 416/416, CTest 4/4 e WikiText-2 40 finestre PPL 6,2456 → 6,2456. In una finestra da 385 token contro CPU, con coda dopo il blocco da 256, stesso top-1 (100,000%) e stessa KL massima a sei decimali (0,000037). Accettato prefill FP16 a 256 come opt-in. Log `build/c6/*-final-*` e `kld-*`.
 

@@ -871,6 +871,7 @@ void process_shaders() {
     string_to_spv("trellis_mm_res", "trellis_matmul_cm.comp", {{"TRELLIS_MM_RESIDUAL", "1"}}, true, true);
 #endif
     string_to_spv("trellis_block", "trellis_transform.comp", {{"TRELLIS_BLOCK", "1"}});
+    string_to_spv("trellis_block_shuffle", "trellis_transform.comp", {{"TRELLIS_BLOCK", "1"}, {"TRELLIS_BLOCK_SHUFFLE", "1"}});
     string_to_spv("trellis_butterfly", "trellis_transform.comp", {});
     string_to_spv("trellis_cross", "trellis_transform.comp", {{"TRELLIS_CROSS", "1"}});
 
