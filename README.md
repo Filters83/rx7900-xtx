@@ -116,7 +116,8 @@ docker run --rm --gpus all -p 127.0.0.1:8080:8080 -v "$PWD:/models:ro" ghcr.io/n
 | NVIDIA, Linux ARM64 (GH200, DGX Spark) | No release binaries; build from source, untested. |
 | Apple Silicon | Experimental, build from source, about 3.8 (3.0bpw) to 4.9 (2.0bpw) tokens/s on an M3 Pro ([Metal notes](nariq/README-metal.md)). |
 | CPU | Every coded operation runs on the CPU, slowly for a 27B model. |
-| AMD, Intel GPUs | No NariQ kernels. |
+| AMD GPUs, Linux (ROCm) | Experimental source build for the RX 7900 XTX and RX 9070 XT. GPU validation is pending. [Use the `nariq/experimental-amd` branch](https://github.com/nari-labs/nari-llama.cpp/tree/nariq/experimental-amd). |
+| Other AMD GPUs, Intel GPUs | NariQ coded operations run on the CPU. |
 
 Kernel tuning has focused on the RTX PRO 6000; on other GPUs NariQ files are slower than comparable stock GGUFs for
 now. Coded embedding lookups run on the CPU. LoRA adapters on NariQ weights are rejected.
