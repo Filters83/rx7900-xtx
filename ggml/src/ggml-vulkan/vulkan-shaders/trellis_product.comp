@@ -27,17 +27,28 @@ layout(push_constant) uniform Parameters {
 } p;
 
 #if defined(TRELLIS_MATVEC_Q8)
-// 16 outputs per workgroup for all tokens of the batch (up to MAX_TOKENS, decode and speculative verify), on the
-// int8 activations of trellis_quant.comp. Each weight is decoded to its four 6-bit bytes once and costs one dot4
-// per token with the replicated input, instead of a decode to float and an FMA per token. The value of a state is
-// the byte sum minus 126; the -126 goes in once per tile and token through the sum of the inputs.
-// Two variants: one token (decode; a 4-token body costs it ~10% in registers) and up to 4 tokens.
+// Each workgroup computes 16 outputs for up to MAX_TOKENS. The replicated path uses a dot4 per weight and token.
+// The packed path sums each weight first and uses a mixed-sign dot4 for four weights and four int8 activations.
+// Both apply the -126 bias through the sum of the activations.
 #ifndef TRELLIS_Q8_TOKENS
 #define TRELLIS_Q8_TOKENS 4
 #endif
 const uint MAX_TOKENS = TRELLIS_Q8_TOKENS;
 layout(local_size_x = 128) in;
+#ifdef TRELLIS_Q8_PACKED
+layout(binding = 2) readonly buffer Packed { uint packed[]; };
+
+uint trellis_pack_weights(uvec4 states) {
+    uint weights = 0;
+    [[unroll]] for (uint j = 0; j < 4; ++j) {
+        const uint value = dotPacked4x8EXT(trellis_bytes(states[j]), 0x01010101u);
+        weights |= value << (8 * j);
+    }
+    return weights;
+}
+#else
 layout(binding = 2) readonly buffer Reps { uvec4 reps[]; };
+#endif
 layout(binding = 2) readonly buffer Meta { uvec2 qmeta[]; };
 shared float partial_lo[MAX_TOKENS * 128];
 shared float partial_hi[MAX_TOKENS * 128];
@@ -48,7 +59,11 @@ void main() {
     const uint split = thread_id / 32;
     const uint tile_k = p.k / 16;
     const uint tile_base = gl_WorkGroupID.x * tile_k;
+#ifdef TRELLIS_Q8_PACKED
+    const uint meta_base = p.batch * tile_k * 2;
+#else
     const uint meta_base = p.batch * tile_k * 8;
+#endif
     // k split over gl_NumWorkGroups.y workgroups for products with few outputs: each writes its partial sums to its
     // own slice of y, which trellis_reduce adds up
     const uint k_split = gl_NumWorkGroups.y;
@@ -66,22 +81,33 @@ void main() {
         const float scale = float(scales[p.scale_offset + tile_col]);
         const uvec4 s_lo = trellis_states4(tile, 8 * lane);
         const uvec4 s_hi = trellis_states4(tile, 8 * lane + 4);
+#ifdef TRELLIS_Q8_PACKED
+        const uint b_lo = trellis_pack_weights(s_lo);
+        const uint b_hi = trellis_pack_weights(s_hi);
+#else
         uvec4 b_lo, b_hi;
         [[unroll]] for (uint j = 0; j < 4; ++j) {
             b_lo[j] = trellis_bytes(s_lo[j]);
             b_hi[j] = trellis_bytes(s_hi[j]);
         }
+#endif
         [[unroll]] for (uint t = 0; t < MAX_TOKENS; ++t) {
             if (t < p.batch) {
                 const uint index = (t * tile_k + tile_col) * 4 + lane % 4;
-                const uvec4 a = reps[index];
                 const uvec2 meta = qmeta[meta_base + index];
+#ifdef TRELLIS_Q8_PACKED
+                const int a = int(packed[index]);
+                const int acc_lo = dotPacked4x8EXT(a, b_lo);
+                const int acc_hi = dotPacked4x8EXT(a, b_hi);
+#else
+                const uvec4 a = reps[index];
                 int acc_lo = 0;
                 int acc_hi = 0;
                 [[unroll]] for (uint j = 0; j < 4; ++j) {
                     acc_lo += dotPacked4x8EXT(int(b_lo[j]), int(a[j]));
                     acc_hi += dotPacked4x8EXT(int(b_hi[j]), int(a[j]));
                 }
+#endif
                 const int bias = 126 * int(meta.x);
                 const float f = scale * uintBitsToFloat(meta.y);
                 sum_lo[t] = fma(float(acc_lo - bias), f, sum_lo[t]);

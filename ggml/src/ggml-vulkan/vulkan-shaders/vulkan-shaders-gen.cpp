@@ -853,6 +853,8 @@ void process_shaders() {
 #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
     string_to_spv("trellis_matvec_q8", "trellis_product.comp", {{"TRELLIS_MATVEC_Q8", "1"}, {"TRELLIS_Q8_TOKENS", "1"}});
     string_to_spv("trellis_matvec_q8x4", "trellis_product.comp", {{"TRELLIS_MATVEC_Q8", "1"}, {"TRELLIS_Q8_TOKENS", "4"}});
+    string_to_spv("trellis_matvec_q8x4_packed", "trellis_product.comp", {{"TRELLIS_MATVEC_Q8", "1"}, {"TRELLIS_Q8_TOKENS", "4"}, {"TRELLIS_Q8_PACKED", "1"}});
+    string_to_spv("trellis_quant_packed", "trellis_quant.comp", {{"TRELLIS_Q8_PACKED", "1"}});
 #endif
     string_to_spv("trellis_quant", "trellis_quant.comp", {});
     string_to_spv("trellis_reduce", "trellis_reduce.comp", {});

@@ -738,6 +738,7 @@ struct vk_device_struct {
     bool shader_64b_indexing;
 
     bool integer_dot_product;
+    bool integer_dot_product_packed_mixed;
     // 0: default, 1: force mmvq, -1: disable mmvq
     int32_t mmvq_mode;
 
@@ -872,6 +873,7 @@ struct vk_device_struct {
     vk_pipeline pipeline_trellis_block, pipeline_trellis_butterfly, pipeline_trellis_cross;
     vk_pipeline pipeline_trellis_matvec[6], pipeline_trellis_matmul[6], pipeline_trellis_decode_rows[6];
     vk_pipeline pipeline_trellis_matvec_q8[6], pipeline_trellis_matvec_q8x4[6], pipeline_trellis_quant, pipeline_trellis_reduce;
+    vk_pipeline pipeline_trellis_matvec_q8x4_packed[6], pipeline_trellis_quant_packed;
     vk_pipeline pipeline_trellis_matmul_cm1[6];
     vk_pipeline pipeline_trellis_mm_cm1[6], pipeline_trellis_mm_res_cm1[6], pipeline_trellis_prep16;
     vk_pipeline pipeline_rms_norm_f32;

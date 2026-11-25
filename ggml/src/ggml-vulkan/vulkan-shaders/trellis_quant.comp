@@ -4,11 +4,15 @@
 // Quantizes the rotated activations of a Trellis product to int8 for trellis_matvec_q8, with one scale per 16
 // inputs (one tile column), absmax / 127. For tile column g and lane group q, reps holds the four inputs that the
 // lanes with lane % 4 == q multiply (columns 2q, 2q + 1, 2q + 8 and 2q + 9 of the tile), each byte replicated four
-// times, so that one dot4 with the four 6-bit bytes of a state gives the input times the byte sum. qmeta holds the
-// sum of those four int8 values and the scale.
+// times, so that one dot4 with the four 6-bit bytes of a state gives the input times the byte sum. The packed variant
+// stores the four int8 values in one word. qmeta holds their sum and scale in both layouts.
 layout(local_size_x = 64) in;
 layout(binding = 0) readonly buffer Activations { float x[]; };
+#ifdef TRELLIS_Q8_PACKED
+layout(binding = 1) writeonly buffer Packed { uint packed[]; };
+#else
 layout(binding = 1) writeonly buffer Reps { uvec4 reps[]; };
+#endif
 layout(binding = 1) writeonly buffer Meta { uvec2 qmeta[]; };
 
 layout(push_constant) uniform Parameters {
@@ -38,13 +42,20 @@ void main() {
     [[unroll]] for (uint i = 0; i < 16; ++i) {
         q[i] = clamp(int(round(v[i] * id)), -127, 127);
     }
-    // the scale and sum entries follow the reps of all tokens, in uvec2 units
+#ifdef TRELLIS_Q8_PACKED
+    const uint meta_base = p.batch * groups * 2;
+#else
     const uint meta_base = p.batch * groups * 8;
+#endif
     [[unroll]] for (uint lq = 0; lq < 4; ++lq) {
         const int c0 = q[2 * lq], c1 = q[2 * lq + 1], c2 = q[2 * lq + 8], c3 = q[2 * lq + 9];
         const uint index = (token * groups + g) * 4 + lq;
+#ifdef TRELLIS_Q8_PACKED
+        packed[index] = uint(c0 & 0xff) | (uint(c1 & 0xff) << 8) | (uint(c2 & 0xff) << 16) | (uint(c3 & 0xff) << 24);
+#else
         reps[index] = uvec4(uint(c0 & 0xff) * 0x01010101u, uint(c1 & 0xff) * 0x01010101u,
                             uint(c2 & 0xff) * 0x01010101u, uint(c3 & 0xff) * 0x01010101u);
+#endif
         qmeta[meta_base + index] = uvec2(uint(c0 + c1 + c2 + c3), floatBitsToUint(d));
     }
 }

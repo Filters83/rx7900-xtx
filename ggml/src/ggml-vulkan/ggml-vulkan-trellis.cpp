@@ -286,11 +286,19 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
                             ctx->trellis_scratch->size >= 2 * stride + q8_size;
         if (use_q8) {
             vk_subbuffer c = { ctx->trellis_scratch, 2 * stride, q8_size };
-            auto & quant = ctx->device->pipeline_trellis_quant;
+            static const bool packed_enabled = [] {
+                const char * opt = std::getenv("GGML_VK_TRELLIS_Q8_PACKED");
+                return opt && std::strcmp(opt, "1") == 0;
+            }();
+            auto & packed_product = ctx->device->pipeline_trellis_matvec_q8x4_packed[bits];
+            // The weight packing cost is recovered across tokens of a verification batch.
+            const bool packed = batch > 1 && packed_enabled && packed_product && ctx->device->pipeline_trellis_quant_packed;
+            auto & quant = packed ? ctx->device->pipeline_trellis_quant_packed : ctx->device->pipeline_trellis_quant;
             ggml_pipeline_request_descriptor_sets(ctx, quant, 1);
             ggml_vk_dispatch_pipeline(ctx, subctx, quant, { a, c }, vk_trellis_product{ k, n, batch, 0 }, { k / 16, batch, 1 });
             ggml_vk_sync_buffers(ctx, subctx);
-            auto & product = batch == 1 ? ctx->device->pipeline_trellis_matvec_q8[bits] : ctx->device->pipeline_trellis_matvec_q8x4[bits];
+            auto & product = packed ? packed_product :
+                (batch == 1 ? ctx->device->pipeline_trellis_matvec_q8[bits] : ctx->device->pipeline_trellis_matvec_q8x4[bits]);
             ggml_pipeline_request_descriptor_sets(ctx, product, 1);
             // one workgroup per 16 outputs for all tokens of the batch. Products with few outputs (the 48-row delta-net
             // projections of Qwen3.8-27B: 3 workgroups for 5120 inputs) split k over up to 16 workgroups, the partial

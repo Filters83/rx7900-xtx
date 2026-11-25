@@ -3319,6 +3319,11 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     ggml_vk_create_pipeline(device, device->pipeline_trellis_prep16, "trellis_prep16", trellis_prep16_len, trellis_prep16_data, "main", 3, sizeof(vk_trellis_product), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_trellis_reduce, "trellis_reduce", trellis_reduce_len, trellis_reduce_data, "main", 1, sizeof(vk_trellis_product), {64, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_trellis_quant, "trellis_quant", trellis_quant_len, trellis_quant_data, "main", 2, sizeof(vk_trellis_product), {64, 1, 1}, {}, 1);
+#if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
+    if (device->integer_dot_product_packed_mixed) {
+        ggml_vk_create_pipeline(device, device->pipeline_trellis_quant_packed, "trellis_quant_packed", trellis_quant_packed_len, trellis_quant_packed_data, "main", 2, sizeof(vk_trellis_product), {64, 1, 1}, {}, 1);
+    }
+#endif
     ggml_vk_create_pipeline(device, device->pipeline_trellis_cross, "trellis_cross", trellis_cross_len, trellis_cross_data, "main", 2, sizeof(vk_trellis_transform), {256, 1, 1}, {}, 1);
     for (uint32_t i = 0; i < 6; ++i) {
         ggml_vk_create_pipeline(device, device->pipeline_trellis_decode_rows[i], "trellis_decode_rows", trellis_decode_rows_len, trellis_decode_rows_data, "main", 5, sizeof(vk_trellis_io), {256, 1, 1}, {i + 1}, 1);
@@ -3327,6 +3332,9 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
         if (device->integer_dot_product) {
             ggml_vk_create_pipeline(device, device->pipeline_trellis_matvec_q8[i], "trellis_matvec_q8", trellis_matvec_q8_len, trellis_matvec_q8_data, "main", 4, sizeof(vk_trellis_product), {16, 1, 1}, {i + 1}, 1);
             ggml_vk_create_pipeline(device, device->pipeline_trellis_matvec_q8x4[i], "trellis_matvec_q8x4", trellis_matvec_q8x4_len, trellis_matvec_q8x4_data, "main", 4, sizeof(vk_trellis_product), {16, 1, 1}, {i + 1}, 1);
+        }
+        if (device->integer_dot_product_packed_mixed) {
+            ggml_vk_create_pipeline(device, device->pipeline_trellis_matvec_q8x4_packed[i], "trellis_matvec_q8x4_packed", trellis_matvec_q8x4_packed_len, trellis_matvec_q8x4_packed_data, "main", 4, sizeof(vk_trellis_product), {16, 1, 1}, {i + 1}, 1);
         }
 #endif
         ggml_vk_create_pipeline(device, device->pipeline_trellis_matmul[i], "trellis_matmul", trellis_matmul_len, trellis_matmul_data, "main", 4, sizeof(vk_trellis_product), {16, 16, 1}, {i + 1}, 1);
@@ -4390,6 +4398,9 @@ vk_device ggml_vk_get_device(size_t idx) {
         }
 
         device->integer_dot_product = device->integer_dot_product && shader_integer_dot_product_props.integerDotProduct4x8BitPackedSignedAccelerated;
+        device->integer_dot_product_packed_mixed = device->integer_dot_product &&
+            shader_integer_dot_product_props.integerDotProduct4x8BitPackedUnsignedAccelerated &&
+            shader_integer_dot_product_props.integerDotProduct4x8BitPackedMixedSignednessAccelerated;
 
         device->min_imported_host_pointer_alignment = external_memory_host_props.minImportedHostPointerAlignment;
 
