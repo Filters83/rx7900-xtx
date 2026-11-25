@@ -3078,6 +3078,11 @@ common_params common_base_params_to_speculative(const common_params & params) {
                    t == COMMON_SPECULATIVE_TYPE_DRAFT_LILICORR;
         });
     if (has_block_draft) {
+        // the block-draft graph computes the head for every token of the ubatch and is reserved for n_ubatch tokens;
+        // it decodes n_max + 1 tokens per sequence, so 64 is plenty. With the Trellis head of NariQ (all 248320 logits
+        // in frequency bands, then reordered) a 512-token reserve took 1437 MiB, 213 MiB at 64 (RX 9070, peak VRAM of
+        // the OpenClaw setup 15.0 GiB + 0.9 GiB shared -> 14.6 GiB + 0.2 GiB)
+        result.n_ubatch = std::min<int32_t>(result.n_ubatch, 64);
         // per-seq output positions: DFlash decodes anchor + n_max masks (n_max + 1); DSpark n_max -> +1 covers both
         const int32_t per_seq = std::max(1, params_spec.n_max + 1);
         result.n_outputs_max = params.n_parallel * per_seq;
