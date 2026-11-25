@@ -3357,6 +3357,9 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
             ggml_vk_create_pipeline(device, device->pipeline_trellis_verify_cm[i], "trellis_verify_cm",
                                     trellis_verify_cm1_len, trellis_verify_cm1_data, "main", 4,
                                     sizeof(vk_trellis_product), {16, 1, 1}, {i + 1}, 1, false, true, 32);
+            ggml_vk_create_pipeline(device, device->pipeline_trellis_verify16_cm[i], "trellis_verify16_cm",
+                                    trellis_verify16_cm1_len, trellis_verify16_cm1_data, "main", 4,
+                                    sizeof(vk_trellis_product), {16, 1, 1}, {i + 1}, 1, false, true, 32);  // 16 x TRELLIS_VERIFY_ROWS outputs
         }
 #endif
 #endif

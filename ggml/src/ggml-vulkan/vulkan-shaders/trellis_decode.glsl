@@ -13,6 +13,11 @@ uint trellis_bytes(uint state) {
     return (h >> 2) & 0x3f3f3f3fu;
 }
 
+// The same four 6-bit bytes, each times 4: no shift, and the dot products that sum them scale the result back.
+uint trellis_bytes4(uint state) {
+    return ((state & 65535u) * 0x83dcd12du) & 0xfcfcfcfcu;
+}
+
 float trellis_grid(uint state) {
     // sum of the four bytes with shifts and adds instead of a multiply by 0x01010101 (a quarter-rate 32-bit integer
     // multiply on RDNA): every byte is below 64, so no sum carries out of its byte
@@ -71,6 +76,46 @@ void trellis_states8(uint tile, uint p, out uvec4 states_lo, out uvec4 states_hi
     const uvec4 shifts = uvec4(16, 16 - BITS, 16 - 2 * BITS, 16 - 3 * BITS);
     states_lo = uvec4(window_lo) >> shifts;
     states_hi = uvec4(window_hi) >> shifts;
+}
+
+// The eight states from p (a multiple of eight) in two steps, so that a loop can read the words of the next tile
+// before decoding this one: trellis_words8 gives the code words of the two halves (p and p + 4; for TRL1-4 the
+// second pair is unused), the same for every tile, trellis_load8 reads them and trellis_states8_from decodes them.
+uvec4 trellis_words8(uint p) {
+    const uint a = trellis_state_start(p) / 32;
+    const uint b = trellis_state_start(p + 4) / 32;
+    return uvec4(a, a + 1 == TILE_WORDS ? 0 : a + 1, b, b + 1 == TILE_WORDS ? 0 : b + 1);
+}
+
+uvec4 trellis_load8(uint tile, uvec4 words) {
+    if (BITS <= 4) {
+        return uvec4(codes[tile + words.x], codes[tile + words.y], 0, 0);
+    }
+    return uvec4(codes[tile + words.x], codes[tile + words.y], codes[tile + words.z], codes[tile + words.w]);
+}
+
+uvec4 trellis_states4_from(uint hi, uint lo, uint offset) {
+    const uint window = (hi << offset) | (lo >> (32 - offset));
+    uvec4 states;
+    [[unroll]] for (uint j = 0; j < 4; ++j) {
+        const uint bit = j * BITS;
+        states[j] = bit <= 16 ? window >> (16 - min(bit, 16)) : (window << 2) | ((lo >> ((30 - offset) & 31)) & 3);
+    }
+    return states;
+}
+
+void trellis_states8_from(uvec4 code, uint p, out uvec4 states_lo, out uvec4 states_hi) {
+    if (BITS <= 4) {
+        const uint offset = trellis_state_start(p) % 32;
+        const uint window_lo = (code.x << offset) | (code.y >> (32 - offset));
+        const uint window_hi = (window_lo << (4 * BITS)) | ((code.y << offset) >> (32 - 4 * BITS));
+        const uvec4 shifts = uvec4(16, 16 - BITS, 16 - 2 * BITS, 16 - 3 * BITS);
+        states_lo = uvec4(window_lo) >> shifts;
+        states_hi = uvec4(window_hi) >> shifts;
+    } else {
+        states_lo = trellis_states4_from(code.x, code.y, trellis_state_start(p) % 32);
+        states_hi = trellis_states4_from(code.z, code.w, trellis_state_start(p + 4) % 32);
+    }
 }
 
 vec4 trellis_decode4(uint tile, uint p) {

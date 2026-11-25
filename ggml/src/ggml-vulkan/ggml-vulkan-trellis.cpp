@@ -117,6 +117,7 @@ size_t ggml_vk_trellis_scratch_stride(const vk_device & device, const ggml_tenso
 // int8 activations of trellis_matvec_q8 (trellis_quant.comp): per input 4 bytes of replicated values and, per
 // group of 4 inputs, 8 bytes of sum and scale, so 6 bytes per input and token
 static constexpr uint32_t VK_TRELLIS_Q8_TOKENS = 4;
+static constexpr uint32_t VK_TRELLIS_VERIFY_TOKENS = 16;
 size_t ggml_vk_trellis_quant_size(const vk_device & device, const ggml_tensor * op) {
     if (op->op != GGML_OP_TRELLIS) {
         return 0;
@@ -317,23 +318,31 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
         // decode and verify batches: int8 activations and dot4 (GGML_VK_TRELLIS_Q8=0 keeps the float product)
         static const bool q8_enabled = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_Q8"); return !opt || std::strcmp(opt, "0") != 0; }();
         const size_t q8_size = ggml_vk_trellis_quant_size(ctx->device, op);
-        const bool use_q8 = q8_enabled && batch <= VK_TRELLIS_Q8_TOKENS && q8_size > 0 && ctx->device->pipeline_trellis_matvec_q8[bits] &&
-                            ctx->device->pipeline_trellis_matvec_q8x4[bits] &&
+        static const bool packed_enabled = [] {
+            const char * opt = std::getenv("GGML_VK_TRELLIS_Q8_PACKED");
+            return opt && std::strcmp(opt, "1") == 0;
+        }();
+        static const bool verify_cm_enabled = [] {
+            const char * opt = std::getenv("GGML_VK_TRELLIS_VERIFY_CM");
+            return opt && std::strcmp(opt, "1") == 0;
+        }();
+        auto & packed_product = ctx->device->pipeline_trellis_matvec_q8x4_packed[bits];
+        // 2-4 tokens: trellis_verify_cm (one INT8 product column per token and input group); 5-16 tokens:
+        // trellis_verify16_cm (one column per token). The second is about 2% slower at 4 tokens (RX 9070, 150 against
+        // 147 us for 5120 -> 17408 TRL3) and costs 176 us at 16 tokens, against 425 us for the FP16 prompt product.
+        // The packed activations need 3 bytes per input and token, within the prompt-batch size of q8_size.
+        auto & verify_cm = batch > VK_TRELLIS_Q8_TOKENS ? ctx->device->pipeline_trellis_verify16_cm[bits]
+                                                        : ctx->device->pipeline_trellis_verify_cm[bits];
+        const bool verify_batch = batch > VK_TRELLIS_Q8_TOKENS && batch <= VK_TRELLIS_VERIFY_TOKENS && packed_enabled &&
+                                  verify_cm_enabled && verify_cm && packed_product && ctx->device->pipeline_trellis_quant_packed &&
+                                  q8_size >= 3 * size_t(k) * batch;
+        const bool use_q8 = q8_enabled && (batch <= VK_TRELLIS_Q8_TOKENS || verify_batch) && q8_size > 0 &&
+                            ctx->device->pipeline_trellis_matvec_q8[bits] && ctx->device->pipeline_trellis_matvec_q8x4[bits] &&
                             ctx->trellis_scratch->size >= 2 * stride + q8_size;
         if (use_q8) {
             vk_subbuffer c = { ctx->trellis_scratch, 2 * stride, q8_size };
-            static const bool packed_enabled = [] {
-                const char * opt = std::getenv("GGML_VK_TRELLIS_Q8_PACKED");
-                return opt && std::strcmp(opt, "1") == 0;
-            }();
-            auto & packed_product = ctx->device->pipeline_trellis_matvec_q8x4_packed[bits];
             // The weight packing cost is recovered across tokens of a verification batch.
             const bool packed = batch > 1 && packed_enabled && packed_product && ctx->device->pipeline_trellis_quant_packed;
-            static const bool verify_cm_enabled = [] {
-                const char * opt = std::getenv("GGML_VK_TRELLIS_VERIFY_CM");
-                return opt && std::strcmp(opt, "1") == 0;
-            }();
-            auto & verify_cm = ctx->device->pipeline_trellis_verify_cm[bits];
             const bool use_verify_cm = packed && verify_cm_enabled && verify_cm;
             auto & quant = packed ? ctx->device->pipeline_trellis_quant_packed : ctx->device->pipeline_trellis_quant;
             ggml_pipeline_request_descriptor_sets(ctx, quant, 1);
