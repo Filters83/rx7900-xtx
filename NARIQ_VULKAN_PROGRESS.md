@@ -189,6 +189,18 @@ Sul microbenchmark 5120 → 17408 a 4 token, TRL3 195,03 → 147,65 µs (-24,3%)
 
 Test Vulkan 416/416, CTest 4/4 e logits identici bit per bit ad A5b nelle 31 posizioni del test. Contro CPU, top-1 31/31 e KL massima 2,10×10⁻⁴, lo stesso risultato del dot4. Per le prove con immagini, tool calling e per il passaggio in OpenClaw restano da soddisfare le soglie del piano. [Piano e registro](NARIQ_PIANO.md)
 
+## Prefill Trellis in blocchi da 256 token
+
+Il percorso sperimentale C6 usa 16 sottogruppi da 32 per riusare ciascuna tile di pesi FP16 su 256 token. Gli accumulatori completi applicano la scala per token nei registri e scrivono direttamente nello scratch di uscita. La preparazione conserva il solo termine FP16 usato dal prodotto. Per abilitarlo nella shell del server o del benchmark impostare questa variabile.
+
+```powershell
+$env:GGML_VK_TRELLIS_MM_WIDE = '1'
+```
+
+Il dispatch usa questo percorso per blocchi completi e torna al kernel da 128 per i resti, per il percorso con residuo FP16 o quando il dispositivo non soddisfa i requisiti. Il formato GGUF e il decoder dei pesi sono gli stessi del riferimento B6.
+
+pp512 615,46 → 696,46 (+13,2%), pp8192 588,70 → 667,32 (+13,4%), pp512 a profondità 32768 444,14 → 529,35 (+19,2%) t/s. Nei due confronti tg64 ha misurato 25,55 → 24,70 t/s nel breve e 21,51 → 22,24 t/s a profondità 32768. Picco dedicato a 32K 11,86 → 11,84 GiB. WikiText-2 40 finestre PPL 6,2456 → 6,2456. In una finestra da 385 token contro CPU, con coda dopo il blocco da 256, stesso top-1 (100,000%) e stessa KL massima a sei decimali (0,000037). Vulkan 416/416 e CTest 4/4. [Registro delle prove](NARIQ_PIANO.md)
+
 ## Riproduzione delle prove
 
 Da un nuovo checkout Windows x64 del branch, usare `scripts\build-vulkan-windows.cmd` con MSVC e Vulkan SDK. Lo script crea gli eseguibili in `build/bin`. Nel checkout locale qui sotto si usa la build già pronta in `build/packaging-x64/bin`. Sostituire `$build` con `'.\build'` dopo una compilazione tramite script. Eseguire dalla radice del repository, con il GGUF 3.0 bpw disponibile in `models`.

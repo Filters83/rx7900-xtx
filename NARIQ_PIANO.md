@@ -17,7 +17,7 @@ Riferimento: setup OpenClaw attuale, fork `d4b007d` con Unsloth UD-Q2_K_XL, DFla
 | Generazione senza bozza, llama-bench tg | ~39 t/s | ~25 t/s (B2) | 30 | 39 |
 | Generazione con DFlash2, contesto breve | 87 t/s (D2, confronto precedente) | 37,23 t/s (D2) | 55 | 75 |
 | Generazione con DFlash2 a 65K | 78 t/s (D2, confronto precedente) | 39,90 t/s (D2) | 50 | 70 |
-| Prefill a 32K | ~910 t/s (llama-bench d32768: 766) | 471 t/s (B3, 512 token con prefisso in cache) | 450 | 800 |
+| Prefill a 32K | ~910 t/s (llama-bench d32768: 766) | 529,35 t/s (B3, 512 token con prefisso in cache) | 450 | 800 |
 | VRAM di picco, OpenClaw completo | 14,1-14,5 GiB | 13,65 GiB D2 testuale con DFlash2. Profilo completo da verificare. | ≤ 14,5 GiB | ≤ 14,5 GiB |
 | Qualità | | Logits identici al dot4. CPU 31/31 top-1, KL max 2,10e-4. | CPU top-1 31/31, KL < 1e-6 | idem |
 
@@ -27,8 +27,8 @@ Il cambio in OpenClaw si propone all'utente quando sono raggiunti i traguardi mi
 
 Aggiornare questa sezione a ogni passaggio di consegne.
 
-- **Ultimo aggiornamento**. 25/11/2026, Codex, B6 WMMA INT8 con somme equivalenti al dot4.
-- **Build di riferimento**. `build/ref-bin` contiene B6 WMMA verificata con `llama-server --version`. Per abilitarla impostare `GGML_VK_TRELLIS_Q8_PACKED=1` e `GGML_VK_TRELLIS_VERIFY_CM=1`. La build A5b è archiviata in `build/b6-cm/ref-before-wmma` (commit `92e2b6c0a`).
+- **Ultimo aggiornamento**. 25/11/2026, Codex, C6 prefill FP16 a 256 token validato.
+- **Build di riferimento**. `build/ref-bin` contiene la build C6, verificabile con `llama-server --version`. Prefill a 256 token con `GGML_VK_TRELLIS_MM_WIDE=1`. La precedente build B6 è archiviata in `build/c6/ref-before-c6` (`10339c849`).
 - **Confronto iniziale in stile OpenClaw (D2, 25/11)**: `D:\Progetti\openclaw\tools\Run-Qwen38-VulkanAB.ps1 -Backends nariq-dflash3r,fork-dflash3r` con `OPENCLAW_AB_UB=512` (varianti `nariq` e `nariq-dflash3r` aggiunte allo script; la build NariQ si cambia con `OPENCLAW_AB_NARIQDIR`). Report `D:\Progetti\openclaw\runtime\benchmarks\20261124-212542-qwen38-backend-ab`. NariQ con DFlash2 3 token: generazione 25,4 / 23,9 / 25,6 t/s (breve / 32K / 65K), prefill 522 / 432, accettazione 35-44%, ciclo 84-90 ms, picco VRAM 14,96 GiB. Unsloth sul fork di produzione: 87,0 / 90,0 / 78,3, prefill 911 / 661, accettazione 44-55%, ciclo 27-32 ms, 14,06 GiB. **Su quella build NariQ DFlash2 rendeva poco**: un ciclo costa circa il doppio di un token (~41 ms) e produce ~2,1 token, quindi la generazione resta ~25 t/s come senza bozza. Senza bozza si risparmia anche ~1,3 GiB di VRAM.
 - **Dove sta il margine in generazione**: (1) il prodotto a 4 token (verifica) costa ~1,9 volte quello a 1 token: se scendesse a ~1,2 volte, con l'accettazione misurata DFlash2 darebbe ~40 t/s; (2) il prodotto a 1 token (~36 ms per token) limitato dal calcolo della decodifica (vedi "Valutazione onesta"). Entrambi dipendono dal costo della decodifica per peso, per questo la valutazione HIP (E1) è utile.
 - **Ultimi risultati**: generazione senza bozza 17,5 → 24,9 t/s; con DFlash2 a 3 token ~41 t/s sul prompt ripetitivo di prova (prima ~10). **Prefill (C3) 150 → ~602 t/s a contesto vuoto, 147 → 472 a 32K** (llama-bench): traguardo minimo del prefill raggiunto. Il percorso cooperativo è ora predefinito (`GGML_VK_TRELLIS_COOPMAT=0` per disattivarlo): non serve più impostare la variabile.
@@ -47,7 +47,8 @@ Aggiornare questa sezione a ogni passaggio di consegne.
   Misura: casi perf `test-backend-ops` 5120 → 17408 TRL3/TRL4 a 1 e 4 token (oggi 112,5 / 215,9 µs per TRL3), poi tg64 e il server DFlash2 3 token come in B1/D2. Obiettivo: 4 token ≤ ~1,3 volte 1 token.
 - **[HIP] E1 conclusa**: su RX 9070 con ROCm 10.2.0, PR #3 `f52affb46` e DLL del venv, B2 224,14 / 8,01 t/s e B3 a profondità 32.768 213,77 / 7,98 t/s (prefill / generazione). CTest 2/2, TRL1–6 e 380/380 prodotti passati; modello 31/31 top-1 a microbatch 1 e 32. I 65/65 layer sono su ROCm0, l'embedding Trellis resta su CPU. Nessuna delle soglie E1 è raggiunta. Raccomandazione: fermare l'ottimizzazione HIP e sottoporre all'utente il prossimo passo.
 - **[HIP] Profilo prefill concluso**: unpack + GEMM pesano l'83,1% nel prefill breve e il 75,1% a profondità 32.768. A 32K il prefill profilato è 212,25 t/s. L'intervento con più margine è un prototipo WMMA RDNA4 che sostituisca entrambe le fasi, con validazione e soglie E1. Per 550 t/s servirebbe circa 5,5 volte sul blocco a parità degli altri tempi. Piano in `D:\Progetti\NariQ HIP RDNA4\NARIQ_HIP_OPTIMIZATION.md`. Il prototipo di ottimizzazione resta da provare.
-- **Prossimo passo**. B5, verificare 5–8 token usando la stessa tile di pesi per due prodotti WMMA e conservando gli accumulatori separati. Scegliere la lunghezza DFlash2 su D2 in base a token/s, accettazione, VRAM e qualità. Valutare C6 per il prefill in INT8. Per arrivare al minimo D2 sul breve, a parità di accettazione, il ciclo deve scendere a circa 40 ms.
+- **C6 validata**. INT8 a un termine 759 t/s su pp512 e 242/416 test. INT8 con residuo 537 t/s e 416/416. Il percorso accettato usa FP16 a 256 token per riusare più a lungo la decodifica dei pesi. pp512 615,46 → 696,46 (+13,2%), pp8192 588,70 → 667,32 (+13,4%), pp512 a profondità 32768 444,14 → 529,35 (+19,2%) t/s. Picco dedicato B3 11,86 → 11,84 GiB. WikiText-2 40 finestre PPL 6,2456 → 6,2456. In una finestra da 385 token contro CPU, con coda dopo il blocco da 256, stesso top-1 (100,000%) e stessa KL massima a sei decimali (0,000037). Vulkan 416/416 e CTest 4/4.
+- **Prossimo passo**. B5 per la generazione con DFlash2 e C7 per il prefill. Per C7 profilare le proiezioni gate/up e le trasformazioni SwiGLU/Hadamard, poi valutare la fusione a partire dal percorso FP16 validato. [Nari Labs #5](https://github.com/nari-labs/nari-llama.cpp/pull/5)
 - **Script di prova del server**: lo scratchpad di Claude non è condiviso. Per una prova equivalente avviare `build\bin\llama-server.exe` con gli argomenti dell'esempio in `NARIQ_VULKAN_PROGRESS.md` più `--spec-type draft-dflash --spec-draft-model D:\Progetti\openclaw\models\qwen38-27b-dflash2\Qwen3.8-27B-DFlash2-Q4_K_M.gguf --spec-draft-device Vulkan0 --spec-draft-ngl 99 --spec-draft-type-k q4_0 --spec-draft-type-v q4_0 --spec-draft-n-max 3 --spec-accept rejection -bs --spec-draft-vocab 65536`, `-c 32768 -ub 512`, e inviare a `/completion` un prompt di ~1500 token con `n_predict` 256; leggere `timings.predicted_per_second`, `draft_n`, `draft_n_accepted`.
 
 ## Regole di lavoro
@@ -146,7 +147,8 @@ Stato: `da fare`, `in corso (chi)`, `fatto`, `scartato`. Le stime di guadagno so
 | C3 | Prodotto cooperativo con tile più grandi entro i 32 KB di memoria condivisa del driver Windows; decodifica dei pesi una volta per tile | fatto (`af07eaa13`) | 32 uscite × 128 token per gruppo, 256 thread che decodificano 8 tile ogni 64 input, attivazioni FP16 preparate una volta per pezzo con una potenza di 2 per token. pp512 150 → ~490, 32K 147 → 395 |
 | C5 | Prodotto cooperativo: forma del gruppo di lavoro | fatto (`71b71362e`) | 64 righe × 32 input per passo, migliore di 2×4, 4×4, 4×1, 8×1, 8×2 (vedi registro); k diviso per le proiezioni da 48 righe |
 | C4 | Attenzione del prefill: verificare che la cache q4_0 usi la conversione f16 (`74856e4`) anche con NariQ | da fare | Comune ai due modelli |
-| C6 | Valutare il prefill Trellis INT8 su Vulkan | da fare | Pesi già interi nel tile e scala delle attivazioni da scegliere. Confrontare pp512 e B3 con C3 FP16 e misurare logits e perplexity. La PR propone il percorso CUDA e la fusione MLP. [Nari Labs #5](https://github.com/nari-labs/nari-llama.cpp/pull/5) |
+| C6 | Valutazione prefill INT8 e riuso pesi FP16 | Completato, FP16 a 256 opt-in | INT8 a un termine fuori tolleranza e a due termini più lento. pp512 615,46 → 696,46 (+13,2%), pp8192 588,70 → 667,32 (+13,4%), pp512 a profondità 32768 444,14 → 529,35 (+19,2%) t/s. |
+| C7 | Profilare e valutare la fusione MLP Trellis in prefill | da fare | Misurare il tempo gate/up, SwiGLU e Hadamard prima di modificare il grafo. [Nari Labs #5](https://github.com/nari-labs/nari-llama.cpp/pull/5) |
 
 ### Fase D: integrazione in OpenClaw
 
@@ -189,6 +191,114 @@ Obiettivo: sapere in poche ore se una build HIP di NariQ parte già meglio della
 ## Registro delle prove
 
 Voci più recenti in alto. Formato: data, chi, commit o "non committato", cosa, numeri (riferimento → candidato), esito.
+
+- **25/11/2026, Codex**, C6 finale. pp512 615,46 → 696,46 (+13,2%), pp8192 588,70 → 667,32 (+13,4%), pp512 a profondità 32768 444,14 → 529,35 (+19,2%) t/s. Vulkan 416/416, CTest 4/4 e WikiText-2 40 finestre PPL 6,2456 → 6,2456. In una finestra da 385 token contro CPU, con coda dopo il blocco da 256, stesso top-1 (100,000%) e stessa KL massima a sei decimali (0,000037). Accettato prefill FP16 a 256 come opt-in. Log `build/c6/*-final-*` e `kld-*`.
+
+- **25/11/2026, Codex**, C6 kld-b. Mean    KLD:  -0.000000 ±   0.000001 | Maximum KLD:   0.000037 | Same top p: 100.000 ± 0.000 %. Exit 0. 14.626 GiB stimati liberi prima della prova. Log build/c6/kld-b.
+
+- **25/11/2026, Codex**, C6 kld-a. Mean    KLD:  -0.000000 ±   0.000001 | Maximum KLD:   0.000037 | Same top p: 100.000 ± 0.000 %. Exit 0. 14.626 GiB stimati liberi prima della prova. Log build/c6/kld-a.
+
+- **25/11/2026, Codex**, C6 kld-cpu. 0.07.884.012 I perplexity: 3.44 seconds per pass - ETA 0.08.132.419 I Final estimate: PPL = 5.9031 +/- 1.12566. Exit 0. 14.63 GiB stimati liberi prima della prova. Log build/c6/kld-cpu.
+
+- **25/11/2026, Codex**, C6 ppl-0-final-b. 0.08.490.256 I perplexity: 1.37 seconds per pass - ETA 0.39.422.870 I Final estimate: PPL = 6.2456 +/- 0.14665. Exit 0. Processi concorrenti assenti, 14.616 GiB stimati liberi. Log build/c6/ppl-0-final-b.
+
+- **25/11/2026, Codex**, C6 ppl-0-final-a. 0.07.585.844 I perplexity: 1.20 seconds per pass - ETA 0.43.026.915 I Final estimate: PPL = 6.2456 +/- 0.14665. Exit 0. Processi concorrenti assenti, 14.608 GiB stimati liberi. Log build/c6/ppl-0-final-a.
+
+- **25/11/2026, Codex**, C6 verifica log WikiText-2. Prima PPL FP16 terminata con PPL 6,2456 e circa 11,14 GiB nel processo Vulkan. Il wrapper richiedeva la riga di offload, omessa al livello di log predefinito di llama-perplexity. Ripetizione A/B con --verbose per confermare 65/65.
+
+- **25/11/2026, Codex**, C6 ppl-0-final-a. 0.09.529.850 I perplexity: 1.60 seconds per pass - ETA 0.45.027.696 I Final estimate: PPL = 6.2456 +/- 0.14665. Exit 1. Processi concorrenti assenti, 14.618 GiB stimati liberi. Log build/c6/ppl-0-final-a.
+
+- **25/11/2026, Codex**, C6 deep-0-final-b. pp512/tg0 d32768 529.35 t/s, pp0/tg64 d32768 22.24 t/s. Exit 0. Processi concorrenti assenti, 14.618 GiB stimati liberi. Log build/c6/deep-0-final-b.
+
+- **25/11/2026, Codex**, C6 deep-0-final-a. pp512/tg0 d32768 444.14 t/s, pp0/tg64 d32768 21.51 t/s. Exit 0. Processi concorrenti assenti, 14.621 GiB stimati liberi. Log build/c6/deep-0-final-a.
+
+- **25/11/2026, Codex**, C6 pp8192-0-final-b. pp8192/tg0 d0 667.32 t/s. Exit 0. Processi concorrenti assenti, 14.619 GiB stimati liberi. Log build/c6/pp8192-0-final-b.
+
+- **25/11/2026, Codex**, C6 pp8192-0-final-a. pp8192/tg0 d0 588.7 t/s. Exit 0. Processi concorrenti assenti, 14.616 GiB stimati liberi. Log build/c6/pp8192-0-final-a.
+
+- **25/11/2026, Codex**, C6 short-0-final-b. pp512/tg0 d0 696.46 t/s, pp0/tg64 d0 24.7 t/s. Exit 0. Processi concorrenti assenti, 14.621 GiB stimati liberi. Log build/c6/short-0-final-b.
+
+- **25/11/2026, Codex**, C6 short-0-final-a. pp512/tg0 d0 615.46 t/s, pp0/tg64 d0 25.55 t/s. Exit 0. Processi concorrenti assenti, 14.617 GiB stimati liberi. Log build/c6/short-0-final-a.
+
+- **25/11/2026, Codex**, C6 ctest-0-final. 100% tests passed, 0 tests failed out of 4. Exit 0. Processi concorrenti assenti, 14.617 GiB stimati liberi. Log build/c6/ctest-0-final.
+
+- **25/11/2026, Codex**, C6 ops-0-final. 416/416 tests passed. Exit 0. Processi concorrenti assenti, 14.616 GiB stimati liberi. Log build/c6/ops-0-final.
+
+- **25/11/2026, Codex**, C6 integrazione batch 256. Blocco FP16 256 come opt-in GGML_VK_TRELLIS_MM_WIDE=1, con scratch verificato e fallback a 128 per i resti, per la variante con residuo e dove la scheda non ha i requisiti. SPIR-V di prodotto e preparazione validati. Build Windows in corso.
+
+- **25/11/2026, Codex**, C6 A-B-B-A batch 256. FP16 606,11 → 692,31 t/s (+14,2%) su pp512, 416/416, VRAM di picco +21 MiB sul bench. Prototipo archiviato. Integrare come opt-in solo per blocchi completi, mantenere kernel e batch da 128 per i resti.
+
+- **25/11/2026, Codex**, C6 short-0-wide-a2. pp512/tg0 d0 604.97 t/s, pp0/tg64 d0 24.73 t/s. Exit 0. Processi concorrenti assenti, 14.621 GiB stimati liberi. Log build/c6/short-0-wide-a2.
+
+- **25/11/2026, Codex**, C6 short-0-wide-b2. pp512/tg0 d0 692.95 t/s, pp0/tg64 d0 24.59 t/s. Exit 0. Processi concorrenti assenti, 14.609 GiB stimati liberi. Log build/c6/short-0-wide-b2.
+
+- **25/11/2026, Codex**, C6 short-0-wide-b1. pp512/tg0 d0 691.66 t/s, pp0/tg64 d0 24.61 t/s. Exit 0. Processi concorrenti assenti, 14.614 GiB stimati liberi. Log build/c6/short-0-wide-b1.
+
+- **25/11/2026, Codex**, C6 short-0-wide-a1. pp512/tg0 d0 607.24 t/s, pp0/tg64 d0 25.51 t/s. Exit 0. Processi concorrenti assenti, 14.619 GiB stimati liberi. Log build/c6/short-0-wide-a1.
+
+- **25/11/2026, Codex**, C6 ops-0-wide. 416/416 tests passed. Exit 0. Processi concorrenti assenti, 14.611 GiB stimati liberi. Log build/c6/ops-0-wide.
+
+- **25/11/2026, Codex**, C6 batch 256. Compilati e validati SPIR-V del prototipo FP16 a 256 token. Risultati completi scritti direttamente e coda parziale gestita in LDS. Raddoppia la durata del riuso dei pesi rispetto alla build a 128. In corso build e misura.
+
+- **25/11/2026, Codex**, C6 A-B-B-A layout contiguo. FP16 per tile 620,17 → 607,74 t/s (-2,0%) su pp512 e 416/416. Scartato. Archiviati codice e DLL INT8, store diretto e layout. Prossima prova FP16 su blocchi di 256 token con riuso della decodifica dei pesi.
+
+- **25/11/2026, Codex**, C6 short-0-tiled-a2. pp512/tg0 d0 628.23 t/s, pp0/tg64 d0 24.63 t/s. Exit 0. Processi concorrenti assenti, 14.62 GiB stimati liberi. Log build/c6/short-0-tiled-a2.
+
+- **25/11/2026, Codex**, C6 short-0-tiled-b2. pp512/tg0 d0 607.69 t/s, pp0/tg64 d0 24.72 t/s. Exit 0. Processi concorrenti assenti, 14.619 GiB stimati liberi. Log build/c6/short-0-tiled-b2.
+
+- **25/11/2026, Codex**, C6 short-0-tiled-b1. pp512/tg0 d0 607.78 t/s, pp0/tg64 d0 24.66 t/s. Exit 0. Processi concorrenti assenti, 14.618 GiB stimati liberi. Log build/c6/short-0-tiled-b1.
+
+- **25/11/2026, Codex**, C6 short-0-tiled-a1. pp512/tg0 d0 612.1 t/s, pp0/tg64 d0 25.54 t/s. Exit 0. Processi concorrenti assenti, 14.613 GiB stimati liberi. Log build/c6/short-0-tiled-a1.
+
+- **25/11/2026, Codex**, C6 ops-0-tiled. 416/416 tests passed. Exit 0. Processi concorrenti assenti, 14.612 GiB stimati liberi. Log build/c6/ops-0-tiled.
+
+- **25/11/2026, Codex**, C6 layout a tile. Build Release riuscita per FP16 a tile contigue, con un solo termine nello scratch. In verifica la parità e il confronto A-B-B-A.
+
+- **25/11/2026, Codex**, C6 A-B-B-A store diretto. FP16 608,32 → 611,91 t/s (+0,59%) su pp512. Il vantaggio iniziale non si ripete fuori dal rumore. INT8 residuo 548,41 t/s con store diretto e 416/416. In compilazione un layout contiguo per le attivazioni FP16 della matrice cooperativa.
+
+- **25/11/2026, Codex**, C6 short-0-direct-a2. pp512/tg0 d0 612.6 t/s, pp0/tg64 d0 24.79 t/s. Exit 0. Processi concorrenti assenti, 14.623 GiB stimati liberi. Log build/c6/short-0-direct-a2.
+
+- **25/11/2026, Codex**, C6 short-0-direct-b2. pp512/tg0 d0 617.54 t/s, pp0/tg64 d0 24.73 t/s. Exit 0. Processi concorrenti assenti, 14.618 GiB stimati liberi. Log build/c6/short-0-direct-b2.
+
+- **25/11/2026, Codex**, C6 short-0-direct-b1. pp512/tg0 d0 606.27 t/s, pp0/tg64 d0 24.69 t/s. Exit 0. Processi concorrenti assenti, 14.62 GiB stimati liberi. Log build/c6/short-0-direct-b1.
+
+- **25/11/2026, Codex**, C6 short-0-direct-a1. pp512/tg0 d0 604.03 t/s, pp0/tg64 d0 24.76 t/s. Exit 0. Processi concorrenti assenti, 14.608 GiB stimati liberi. Log build/c6/short-0-direct-a1.
+
+- **25/11/2026, Codex**, C6 short-2-direct. pp512/tg0 d0 548.41 t/s, pp0/tg64 d0 24.83 t/s. Exit 0. Processi concorrenti assenti, 14.616 GiB stimati liberi. Log build/c6/short-2-direct.
+
+- **25/11/2026, Codex**, C6 ops-2-direct. 416/416 tests passed. Exit 0. Processi concorrenti assenti, 14.62 GiB stimati liberi. Log build/c6/ops-2-direct.
+
+- **25/11/2026, Codex**, C6 short-0-direct. pp512/tg0 d0 627.19 t/s, pp0/tg64 d0 25.56 t/s. Exit 0. Processi concorrenti assenti, 14.615 GiB stimati liberi. Log build/c6/short-0-direct.
+
+- **25/11/2026, Codex**, C6 ops-0-direct. 416/416 tests passed. Exit 0. Processi concorrenti assenti, 14.615 GiB stimati liberi. Log build/c6/ops-0-direct.
+
+- **25/11/2026, Codex**, C6 diagnostica numerica. ISA AMD conferma v_wmma_i32_16x16x16_iu8. Nei 26 logits di prompt, KL massima CPU FP16 3,06e-7, INT8 a un termine 8,22e-4, INT8 con residuo 3,02e-8. Tutti 31/31 top-1 nel test completo. La soglia 1e-6 sul test completo non passa nemmeno con FP16 perché include la generazione INT8 a un token.
+
+- **25/11/2026, Codex**, C6 store diretto. Compilati con glslc e spirv-val i due prodotti con store diretto dei risultati. La scala per token si applica nel sottogruppo. Risparmia 8 KiB di LDS per gruppo e usa il percorso originale per le code non multiple di 16.
+
+- **25/11/2026, Codex**, C6 isa-1. TRL3 395.37 us, TRL4 455.82 us. Exit 0. Processi concorrenti assenti, 13.838 GiB stimati liberi. Log build/c6/isa-1.
+
+- **25/11/2026, Codex**, C6 logits-2. top-1 31/31, greedy True, KL max 0.000161149522276782, media 7.60262718245935E-06. Exit 1. Processi concorrenti assenti, 13.866 GiB stimati liberi. Log build/c6/logits-2.
+
+- **25/11/2026, Codex**, C6 logits-1. top-1 31/31, greedy True, KL max 0.000821862253521766, media 0.000205871004766816. Exit 1. Processi concorrenti assenti, 13.866 GiB stimati liberi. Log build/c6/logits-1.
+
+- **25/11/2026, Codex**, C6 logits-0. top-1 31/31, greedy True, KL max 6.16944258966882E-05, media 4.03096388117599E-06. Exit 1. Processi concorrenti assenti, 13.866 GiB stimati liberi. Log build/c6/logits-0.
+
+- **25/11/2026, Codex**, C6 prima decisione. pp512 FP16 601,01, INT8 a un termine 758,86 (+26,3%) ma 242/416, INT8 con residuo 537,16 (-10,6%) e 416/416. Nessuna variante qualificata. Verificare logits e provare store cooperativo diretto per togliere LDS al prefill.
+
+- **25/11/2026, Codex**, C6 short-2. pp512/tg0 d0 537.16 t/s, pp0/tg64 d0 24.43 t/s. Exit 0. Processi concorrenti assenti, 13.865 GiB stimati liberi. Log build/c6/short-2.
+
+- **25/11/2026, Codex**, C6 short-1. pp512/tg0 d0 758.86 t/s, pp0/tg64 d0 24.43 t/s. Exit 0. Processi concorrenti assenti, 13.866 GiB stimati liberi. Log build/c6/short-1.
+
+- **25/11/2026, Codex**, C6 short-0. pp512/tg0 d0 601.01 t/s, pp0/tg64 d0 24.67 t/s. Exit 0. Processi concorrenti assenti, 13.825 GiB stimati liberi. Log build/c6/short-0.
+
+- **25/11/2026, Codex**, C6 ops-2. 416/416 tests passed. Exit 0. Processi concorrenti assenti, 13.82 GiB stimati liberi. Log build/c6/ops-2.
+
+- **25/11/2026, Codex**, C6 ops-1. 242/416 tests passed. Exit 1. Processi concorrenti assenti, 13.767 GiB stimati liberi. Log build/c6/ops-1.
+
+- **25/11/2026, Codex**, C6 build Release. BUILD_OK con MSVC e Vulkan SDK. Inizio test e confronto con FP16 del commit 10339c849.
+
+- **25/11/2026, Codex**, C6 compilazione shader. Vulkan S8/S8/S32 16x16x16 verificato in B6. Prototipo che riusa la forma C3, con scala per token e uno o due termini INT8. Entrambe le varianti passano glslc e spirv-val. Build e risultati da verificare.
 
 - **25/11/2026, Codex**, B6 idea 2 finale, build Windows Release con barriera iniziale. In A-B-B-A a quattro token TRL3 195,03 → 147,65 µs (-24,3%) e TRL4 190,34 → 146,97 µs (-22,8%), rapporti 4/1 1,35 e 1,38. Vulkan 416/416, CTest 4/4 e identità bit per bit dei logits contro A5b. Contro CPU top-1 31/31, stessi greedy e KL max 2,10e-4. DFlash2 B1 51,31 → 65,13, D2 29,02/31,89/31,31 → 37,23/40,32/39,90 t/s (breve/32K/65K) con gli stessi hash e la stessa accettazione. Picco D2 13,65 GiB dedicati e 0,10 condivisi. Accettata come opzione sperimentale. Log `build/b6-cm/final-*` e baseline `v4-server-0.*`.
 

@@ -3317,6 +3317,14 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     ggml_vk_create_pipeline(device, device->pipeline_trellis_block, "trellis_block", trellis_block_len, trellis_block_data, "main", 1, sizeof(vk_trellis_transform), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_trellis_butterfly, "trellis_butterfly", trellis_butterfly_len, trellis_butterfly_data, "main", 1, sizeof(vk_trellis_transform), {256, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_trellis_prep16, "trellis_prep16", trellis_prep16_len, trellis_prep16_data, "main", 3, sizeof(vk_trellis_product), {1, 1, 1}, {}, 1);
+#if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
+    if (device->coopmat_support_16x16x16_f32acc && device->subgroup_require_full_support &&
+        device->properties.limits.maxComputeWorkGroupInvocations >= 512 &&
+        device->properties.limits.maxComputeWorkGroupSize[0] >= 512) {
+        ggml_vk_create_pipeline(device, device->pipeline_trellis_prep16_wide, "trellis_prep16_wide", trellis_prep16_wide_len,
+                                trellis_prep16_wide_data, "main", 3, sizeof(vk_trellis_product), {1, 1, 1}, {}, 1);
+    }
+#endif
     ggml_vk_create_pipeline(device, device->pipeline_trellis_reduce, "trellis_reduce", trellis_reduce_len, trellis_reduce_data, "main", 1, sizeof(vk_trellis_product), {64, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_trellis_quant, "trellis_quant", trellis_quant_len, trellis_quant_data, "main", 2, sizeof(vk_trellis_product), {64, 1, 1}, {}, 1);
 #if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
@@ -3364,6 +3372,11 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
                 ggml_vk_create_pipeline(device, device->pipeline_trellis_mm_res_cm1[i], "trellis_mm_res_cm1",
                                         trellis_mm_res_cm1_len, trellis_mm_res_cm1_data, "main", 4, sizeof(vk_trellis_product),
                                         {64, 1, 1}, {i + 1}, 1, false, true, 32);
+                if (device->pipeline_trellis_prep16_wide) {
+                    ggml_vk_create_pipeline(device, device->pipeline_trellis_mm_wide_cm1[i], "trellis_mm_wide_cm1",
+                                            trellis_mm_wide_cm1_len, trellis_mm_wide_cm1_data, "main", 4, sizeof(vk_trellis_product),
+                                            {64, 1, 1}, {i + 1}, 1, false, true, 32);
+                }
             }
         }
 #endif

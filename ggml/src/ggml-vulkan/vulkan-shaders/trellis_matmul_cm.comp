@@ -7,12 +7,9 @@
 #extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
 #pragma use_vulkan_memory_model
 
-// Trellis prompt-batch product on FP16 cooperative matrices. A workgroup of 8 subgroups of 32 covers ROW_TILES x 16
-// outputs (64 by default) and the 128 tokens of the chunk (one 16-token tile per subgroup). Every K_TILES x 16 inputs
-// (32 by default) all 256 threads decode the ROW_TILES x K_TILES weight tiles into shared memory, as exact FP16
-// integers, and each
-// subgroup multiplies them with its tokens, read directly from the FP16 activations of trellis_prep16.comp, which
-// already carry the tile scales and a power-of-two range per token. TRELLIS_MM_RESIDUAL also multiplies the FP16
+// The workgroup decodes ROW_TILES x K_TILES weight tiles into shared memory as exact FP16 integers.
+// Each subgroup multiplies them with 16 tokens. A chunk covers 128 tokens, or 256 with TRELLIS_MM_WIDE.
+// The prepared activations carry the tile scales and a power-of-two range per token. TRELLIS_MM_RESIDUAL also multiplies the FP16
 // rounding residuals of the activations: as exact as the F32 path, about 25% slower (RX 9070, NariQ 3.0 bpw pp512
 // 452 against 602 t/s); without it the activations keep FP16 precision (2^-11 relative).
 //
@@ -32,9 +29,14 @@ layout(push_constant) uniform Parameters {
     uint scale_offset;
 } p;
 
+#ifdef TRELLIS_MM_WIDE
+layout(local_size_x = 512) in;
+const uint TOKENS = 256;
+#else
 layout(local_size_x = 256) in;
-
 const uint TOKENS = 128;
+#endif
+const uint SUBGROUPS = TOKENS / 16;
 // RX 9070, NariQ 3.0 bpw pp512 by row tiles x input tiles per step: 2 x 4 519 t/s, 4 x 4 483, 4 x 2 602-626,
 // 4 x 1 601, 8 x 1 566-569, 8 x 2 520 (one weight tile per thread to decode and 4 row tiles per activation load)
 #ifndef TRELLIS_MM_ROW_TILES
@@ -48,10 +50,21 @@ const uint K_TILES = TRELLIS_MM_K_TILES;
 const uint W_STRIDE = 16 * K_TILES;
 shared float16_t w[ROW_TILES * 16 * W_STRIDE];
 // one 16 x 16 result tile per subgroup at a time
-shared float result[8 * 256];
+#ifndef TRELLIS_MM_WIDE
+shared float result[SUBGROUPS * 256];
+#endif
 
 #define ACC coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>
 #define ZERO ACC(0.0)
+
+#ifdef TRELLIS_MM_WIDE
+void store_scaled(ACC tile, ACC factors, uint offset) {
+    [[unroll]] for (uint i = 0; i < tile.length(); ++i) {
+        tile[i] *= factors[i];
+    }
+    coopMatStore(tile, y, offset, p.n, gl_CooperativeMatrixLayoutColumnMajor);
+}
+#endif
 
 void decode_tile(const uint slot, const uint lane, const uint row_tile0, const uint row_tiles, const uint tile_k,
                  const uint k0, const uint k_end) {
@@ -95,7 +108,7 @@ void main() {
     for (uint k0 = k_part * chunk; k0 < k_end; k0 += K_TILES) {
         // ROW_TILES x K_TILES weight tiles, one or two per subgroup
         decode_tile(tid / 32, lane, row_tile0, row_tiles, tile_k, k0, k_end);
-        [[unroll]] for (uint extra = 8; extra < ROW_TILES * K_TILES; extra += 8) {
+        [[unroll]] for (uint extra = SUBGROUPS; extra < ROW_TILES * K_TILES; extra += SUBGROUPS) {
             decode_tile(tid / 32 + extra, lane, row_tile0, row_tiles, tile_k, k0, k_end);
         }
         barrier();
@@ -145,13 +158,23 @@ void main() {
     acc2 += res2 * (1.0 / 2048.0);
     acc3 += res3 * (1.0 / 2048.0);
 #endif
+#ifdef TRELLIS_MM_WIDE
+    // The host dispatches only full chunks. Each token scale applies to every row.
+    ACC factors;
+    coopMatLoad(factors, inv_m, TOKENS * p.k / 2 + token0, 0, gl_CooperativeMatrixLayoutRowMajor);
+    const uint out_base = (k_part * p.batch + token0) * p.n + row_tile0 * 16;
+#define STORE(R, ACCV) \
+    if (row_tiles > R) { \
+        store_scaled(ACCV, factors, out_base + R * 16); \
+    }
+#else
     const uint scale_base = TOKENS * p.k;
     // write the row tiles one at a time through shared memory
 #define STORE(R, ACCV) \
     if (row_tiles > R) { \
         coopMatStore(ACCV, result, sg * 256, 16, gl_CooperativeMatrixLayoutColumnMajor); \
         barrier(); \
-        for (uint i = tid; i < 8 * 256; i += 256) { \
+        for (uint i = tid; i < SUBGROUPS * 256; i += gl_WorkGroupSize.x) { \
             const uint token = 16 * (i / 256) + (i % 256) / 16; \
             if (token < p.batch) { \
                 y[(k_part * p.batch + token) * p.n + (row_tile0 + R) * 16 + i % 16] = result[i] * inv_m[scale_base + token]; \
@@ -159,6 +182,7 @@ void main() {
         } \
         barrier(); \
     }
+#endif
     STORE(0, acc0)
     STORE(1, acc1)
     STORE(2, acc2)

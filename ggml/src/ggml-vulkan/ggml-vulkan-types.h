@@ -878,6 +878,7 @@ struct vk_device_struct {
     vk_pipeline pipeline_trellis_verify_cm[6];
     vk_pipeline pipeline_trellis_matmul_cm1[6];
     vk_pipeline pipeline_trellis_mm_cm1[6], pipeline_trellis_mm_res_cm1[6], pipeline_trellis_prep16;
+    vk_pipeline pipeline_trellis_mm_wide_cm1[6], pipeline_trellis_prep16_wide;
     vk_pipeline pipeline_rms_norm_f32;
     vk_pipeline pipeline_rms_norm_mul_f32;
     vk_pipeline pipeline_rms_norm_mul_q8_1_f32[2];      // rows up to 512, up to 8192 values

@@ -865,7 +865,9 @@ void process_shaders() {
     string_to_spv("trellis_verify", "trellis_verify_cm.comp", {}, true, true);
 #endif
     string_to_spv("trellis_matmul", "trellis_product.comp", {{"TRELLIS_COOPMAT", "1"}}, true, true);
+    string_to_spv("trellis_prep16_wide", "trellis_prep16.comp", {{"TRELLIS_MM_WIDE", "1"}});
     string_to_spv("trellis_mm", "trellis_matmul_cm.comp", {}, true, true);
+    string_to_spv("trellis_mm_wide", "trellis_matmul_cm.comp", {{"TRELLIS_MM_WIDE", "1"}}, true, true);
     string_to_spv("trellis_mm_res", "trellis_matmul_cm.comp", {{"TRELLIS_MM_RESIDUAL", "1"}}, true, true);
 #endif
     string_to_spv("trellis_block", "trellis_transform.comp", {{"TRELLIS_BLOCK", "1"}});

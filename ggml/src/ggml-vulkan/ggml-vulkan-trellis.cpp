@@ -9,7 +9,40 @@
 #include <string>
 
 static constexpr uint32_t VK_TRELLIS_BATCH = 128;
+static constexpr uint32_t VK_TRELLIS_WIDE_BATCH = 256;
 static constexpr uint32_t VK_TRELLIS_BLOCK_LIMIT = 4096;
+
+static bool ggml_vk_trellis_mm_enabled() {
+    static const bool enabled = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_MM"); return !opt || std::strcmp(opt, "0") != 0; }();
+    return enabled;
+}
+
+static bool ggml_vk_trellis_coopmat_enabled() {
+    static const bool enabled = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_COOPMAT"); return !opt || std::strcmp(opt, "0") != 0; }();
+    return enabled;
+}
+
+static bool ggml_vk_trellis_residual_enabled() {
+    static const bool enabled = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_MM_RESIDUAL"); return opt && std::strcmp(opt, "1") == 0; }();
+    return enabled;
+}
+
+static bool ggml_vk_trellis_use_wide(const vk_device & device, const ggml_tensor * op) {
+    static const bool enabled = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_MM_WIDE"); return opt && std::strcmp(opt, "1") == 0; }();
+    if (!enabled || op->op != GGML_OP_TRELLIS || ggml_nrows(op) < VK_TRELLIS_WIDE_BATCH ||
+        !ggml_is_trellis_type(op->src[0]->type) || !ggml_vk_trellis_coopmat_enabled() ||
+        !ggml_vk_trellis_mm_enabled() || ggml_vk_trellis_residual_enabled() ||
+        !device->pipeline_trellis_mm_wide_cm1[op->src[0]->type - GGML_TYPE_TRL1]) {
+        return false;
+    }
+    const auto & limits = device->properties.limits;
+    const size_t width = std::max(op->ne[0], op->src[1]->ne[0]);
+    const size_t stride = ggml_vk_align_size(width * VK_TRELLIS_WIDE_BATCH * sizeof(float), limits.minStorageBufferOffsetAlignment);
+    const size_t prep = ggml_vk_align_size((sizeof(ggml_fp16_t) * op->src[0]->ne[0] + sizeof(float)) * VK_TRELLIS_WIDE_BATCH,
+                                          limits.minStorageBufferOffsetAlignment);
+    return stride <= limits.maxStorageBufferRange && prep <= limits.maxStorageBufferRange &&
+           2 * stride + prep <= device->max_buffer_size;
+}
 
 enum vk_trellis_stage : uint8_t {
     TRELLIS_PROFILE_START,
@@ -77,7 +110,7 @@ void ggml_vk_trellis_print_profile(ggml_backend_vk_context * ctx) {
 size_t ggml_vk_trellis_scratch_stride(const vk_device & device, const ggml_tensor * op) {
     const bool rows = op->op == GGML_OP_TRELLIS_GET_ROWS;
     const size_t width = rows ? op->ne[0] : std::max(op->ne[0], op->src[1]->ne[0]);
-    const size_t batch = std::min<int64_t>(ggml_nrows(op), VK_TRELLIS_BATCH);
+    const size_t batch = ggml_vk_trellis_use_wide(device, op) ? VK_TRELLIS_WIDE_BATCH : std::min<int64_t>(ggml_nrows(op), VK_TRELLIS_BATCH);
     return ggml_vk_align_size(width * batch * sizeof(float), device->properties.limits.minStorageBufferOffsetAlignment);
 }
 
@@ -89,16 +122,14 @@ size_t ggml_vk_trellis_quant_size(const vk_device & device, const ggml_tensor * 
         return 0;
     }
     if (ggml_nrows(op) > VK_TRELLIS_Q8_TOKENS) {
-        // FP16 activations of trellis_prep16 and their residuals for a whole chunk, then one float per token
-        return ggml_vk_align_size(4 * size_t(op->src[0]->ne[0]) * VK_TRELLIS_BATCH + sizeof(float) * VK_TRELLIS_BATCH,
+        const size_t k = op->src[0]->ne[0];
+        // The wide chunk stores one FP16 term, while the smaller chunk can store two.
+        const size_t prep = ggml_vk_trellis_use_wide(device, op) ? (2 * k + sizeof(float)) * VK_TRELLIS_WIDE_BATCH
+                                                               : (4 * k + sizeof(float)) * VK_TRELLIS_BATCH;
+        return ggml_vk_align_size(prep,
                                   device->properties.limits.minStorageBufferOffsetAlignment);
     }
     return ggml_vk_align_size(6 * size_t(op->src[0]->ne[0]) * ggml_nrows(op), device->properties.limits.minStorageBufferOffsetAlignment);
-}
-
-static bool ggml_vk_trellis_mm_enabled() {
-    static const bool enabled = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_MM"); return !opt || std::strcmp(opt, "0") != 0; }();
-    return enabled;
 }
 
 bool ggml_vk_trellis_supported(const vk_device & device, const ggml_tensor * op) {
@@ -220,8 +251,12 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
     pc.k = k;
     pc.n = n;
 
-    for (pc.first = 0; pc.first < tokens; pc.first += VK_TRELLIS_BATCH) {
-        const uint32_t batch = std::min(tokens - pc.first, VK_TRELLIS_BATCH);
+    const bool wide = ggml_vk_trellis_use_wide(ctx->device, op);
+    uint32_t batch = 0;
+    for (pc.first = 0; pc.first < tokens; pc.first += batch) {
+        const uint32_t remaining = tokens - pc.first;
+        const bool wide_chunk = wide && remaining >= VK_TRELLIS_WIDE_BATCH;
+        batch = wide_chunk ? VK_TRELLIS_WIDE_BATCH : std::min(remaining, VK_TRELLIS_BATCH);
         vk_subbuffer a = { ctx->trellis_scratch, 0, stride };
         vk_subbuffer b = { ctx->trellis_scratch, stride, stride };
         // Scratch is shared by unrelated graph nodes.
@@ -271,12 +306,7 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
         ggml_vk_trellis_side(ctx, subctx, a, b, k, batch, desc + 3, nullptr, 0, false);
         ggml_vk_trellis_stamp(ctx, subctx, TRELLIS_PROFILE_ROTATE_IN);
 
-        // cooperative-matrix prompt batches by default where the device has them (GGML_VK_TRELLIS_COOPMAT=0 keeps
-        // the F32 product)
-        static const bool coopmat_enabled = [] {
-            const char * opt = std::getenv("GGML_VK_TRELLIS_COOPMAT");
-            return !opt || std::strcmp(opt, "0") != 0;
-        }();
+        const bool coopmat_enabled = ggml_vk_trellis_coopmat_enabled();
         auto & coopmat = ctx->device->pipeline_trellis_matmul_cm1[bits];
         // decode and verify batches: int8 activations and dot4 (GGML_VK_TRELLIS_Q8=0 keeps the float product)
         static const bool q8_enabled = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_Q8"); return !opt || std::strcmp(opt, "0") != 0; }();
@@ -325,18 +355,17 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
             }
         } else if (ggml_vk_trellis_mm_enabled() && batch >= 16 && coopmat_enabled && ctx->device->pipeline_trellis_mm_cm1[bits] &&
                    q8_size > 0 && ctx->trellis_scratch->size >= 2 * stride + q8_size) {
-            // prompt batches: FP16 activations with the tile scales and a power-of-two range per token, then the
-            // 32 x 128 cooperative-matrix product (GGML_VK_TRELLIS_MM=0 keeps trellis_matmul_cm1)
+            // Prepare FP16 activations with the tile scales and a power-of-two range per token.
             vk_subbuffer c = { ctx->trellis_scratch, 2 * stride, q8_size };
-            auto & prep = ctx->device->pipeline_trellis_prep16;
+            auto & prep = wide_chunk ? ctx->device->pipeline_trellis_prep16_wide : ctx->device->pipeline_trellis_prep16;
             ggml_pipeline_request_descriptor_sets(ctx, prep, 1);
             ggml_vk_dispatch_pipeline(ctx, subctx, prep, { a, scale_buf, c }, vk_trellis_product{ k, n, batch, offset(scales) },
-                                      { VK_TRELLIS_BATCH, 1, 1 });
+                                      { wide_chunk ? VK_TRELLIS_WIDE_BATCH : VK_TRELLIS_BATCH, 1, 1 });
             ggml_vk_sync_buffers(ctx, subctx);
             // GGML_VK_TRELLIS_MM_RESIDUAL=1: also multiply the FP16 rounding residuals of the activations
-            static const bool residual = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_MM_RESIDUAL"); return opt && std::strcmp(opt, "1") == 0; }();
-            auto & product = residual && ctx->device->pipeline_trellis_mm_res_cm1[bits] ? ctx->device->pipeline_trellis_mm_res_cm1[bits]
-                                                                                        : ctx->device->pipeline_trellis_mm_cm1[bits];
+            auto & fp16_product = ggml_vk_trellis_residual_enabled() && ctx->device->pipeline_trellis_mm_res_cm1[bits]
+                                ? ctx->device->pipeline_trellis_mm_res_cm1[bits] : ctx->device->pipeline_trellis_mm_cm1[bits];
+            auto & product = wide_chunk ? ctx->device->pipeline_trellis_mm_wide_cm1[bits] : fp16_product;
             ggml_pipeline_request_descriptor_sets(ctx, product, 1);
             // few outputs (the 48-row delta-net projections: 2 workgroups): split k as in the int8 product
             const uint32_t groups = CEIL_DIV(n, 64), tiles = k / 16;
