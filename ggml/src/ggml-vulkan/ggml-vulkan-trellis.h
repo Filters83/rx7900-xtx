@@ -11,6 +11,17 @@ struct vk_trellis_io {
     uint32_t vocab;
 };
 
+// trellis_fused.comp: the input stage (with trellis_io.comp's offsets and strides) or the output stage, each with
+// its block transform
+struct vk_trellis_fused {
+    uint32_t k, n, first;
+    uint32_t offsets[7];
+    uint32_t strides[3];
+    uint32_t ne1, ne2, use_gather;
+    uint32_t len, batch;
+    float scale;
+};
+
 struct vk_trellis_product {
     uint32_t k, n, batch, scale_offset;
 };

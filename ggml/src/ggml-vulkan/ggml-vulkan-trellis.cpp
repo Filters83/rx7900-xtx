@@ -305,13 +305,41 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
         for (int i = 0; i < 3; ++i) {
             pc.strides[i] = x->nb[i + 1] / sizeof(float);
         }
-        auto & input = ctx->device->pipeline_trellis_input;
-        ggml_pipeline_request_descriptor_sets(ctx, input, 1);
-        ggml_vk_dispatch_pipeline(ctx, subctx, input, { x_buf, pre_buf, pin_buf, a }, pc, { k, batch, 1 });
-        ggml_vk_sync_buffers(ctx, subctx);
-        ggml_vk_trellis_stamp(ctx, subctx, TRELLIS_PROFILE_INPUT);
-        ggml_vk_trellis_side(ctx, subctx, a, b, k, batch, desc + 3, nullptr, 0, false);
-        ggml_vk_trellis_stamp(ctx, subctx, TRELLIS_PROFILE_ROTATE_IN);
+        // GGML_VK_TRELLIS_FUSE=1, batches of up to 15 tokens with block transforms (kind 1, blocks of up to 4096):
+        // input, input transform and int8 quantization in one launch, output transform and output in another
+        // (trellis_fused.comp, one workgroup per block and token)
+        static const bool fuse_enabled = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_FUSE"); return opt && std::strcmp(opt, "1") == 0; }();
+        const int32_t * side_in = desc + 3;
+        const bool fuse_in = fuse_enabled && batch < 16 && side_in[0] == 1 && side_in[1] > 0 && side_in[1] <= int32_t(VK_TRELLIS_BLOCK_LIMIT) &&
+                             side_in[1] % 16 == 0 && k % side_in[1] == 0;
+        const bool fuse_out = fuse_enabled && batch < 16 && desc[0] == 1 && desc[6] == 0 && desc[1] > 0 &&
+                              desc[1] <= int32_t(VK_TRELLIS_BLOCK_LIMIT) && n % desc[1] == 0 && pout == nullptr;
+        vk_trellis_fused fused_in_pc = {};
+        fused_in_pc.k = k;
+        fused_in_pc.n = n;
+        fused_in_pc.first = pc.first;
+        std::copy_n(pc.offsets, 7, fused_in_pc.offsets);
+        std::copy_n(pc.strides, 3, fused_in_pc.strides);
+        fused_in_pc.ne1 = pc.ne1;
+        fused_in_pc.ne2 = pc.ne2;
+        fused_in_pc.use_gather = pc.use_gather;
+        fused_in_pc.len = fuse_in ? side_in[1] : 0;
+        fused_in_pc.batch = batch;
+        fused_in_pc.scale = fuse_in ? float(1.0 / std::sqrt(double(side_in[1]))) : 1.0f;
+        const auto fused_input = [&](vk_pipeline & pipeline, vk_subbuffer & out) {
+            ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
+            ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { x_buf, pre_buf, pin_buf, out }, fused_in_pc, { k / fused_in_pc.len, batch, 1 });
+            ggml_vk_sync_buffers(ctx, subctx);
+        };
+        if (!fuse_in) {
+            auto & input = ctx->device->pipeline_trellis_input;
+            ggml_pipeline_request_descriptor_sets(ctx, input, 1);
+            ggml_vk_dispatch_pipeline(ctx, subctx, input, { x_buf, pre_buf, pin_buf, a }, pc, { k, batch, 1 });
+            ggml_vk_sync_buffers(ctx, subctx);
+            ggml_vk_trellis_stamp(ctx, subctx, TRELLIS_PROFILE_INPUT);
+            ggml_vk_trellis_side(ctx, subctx, a, b, k, batch, desc + 3, nullptr, 0, false);
+            ggml_vk_trellis_stamp(ctx, subctx, TRELLIS_PROFILE_ROTATE_IN);
+        }
 
         const bool coopmat_enabled = ggml_vk_trellis_coopmat_enabled();
         auto & coopmat = ctx->device->pipeline_trellis_matmul_cm1[bits];
@@ -344,10 +372,14 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
             // The weight packing cost is recovered across tokens of a verification batch.
             const bool packed = batch > 1 && packed_enabled && packed_product && ctx->device->pipeline_trellis_quant_packed;
             const bool use_verify_cm = packed && verify_cm_enabled && verify_cm;
-            auto & quant = packed ? ctx->device->pipeline_trellis_quant_packed : ctx->device->pipeline_trellis_quant;
-            ggml_pipeline_request_descriptor_sets(ctx, quant, 1);
-            ggml_vk_dispatch_pipeline(ctx, subctx, quant, { a, c }, vk_trellis_product{ k, n, batch, 0 }, { k / 16, batch, 1 });
-            ggml_vk_sync_buffers(ctx, subctx);
+            if (fuse_in) {
+                fused_input(packed ? ctx->device->pipeline_trellis_fused_in_q8_packed : ctx->device->pipeline_trellis_fused_in_q8, c);
+            } else {
+                auto & quant = packed ? ctx->device->pipeline_trellis_quant_packed : ctx->device->pipeline_trellis_quant;
+                ggml_pipeline_request_descriptor_sets(ctx, quant, 1);
+                ggml_vk_dispatch_pipeline(ctx, subctx, quant, { a, c }, vk_trellis_product{ k, n, batch, 0 }, { k / 16, batch, 1 });
+                ggml_vk_sync_buffers(ctx, subctx);
+            }
             auto & matvec = batch == 1 ? ctx->device->pipeline_trellis_matvec_q8[bits] : ctx->device->pipeline_trellis_matvec_q8x4[bits];
             auto & product = use_verify_cm ? verify_cm : (packed ? packed_product : matvec);
             ggml_pipeline_request_descriptor_sets(ctx, product, 1);
@@ -406,6 +438,9 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
                 ggml_vk_dispatch_pipeline(ctx, subctx, reduce, { b }, vk_trellis_product{ splits, n, batch, 0 }, { n * batch, 1, 1 });
             }
         } else {
+            if (fuse_in) {
+                fused_input(ctx->device->pipeline_trellis_fused_in, a);
+            }
             auto & product = batch >= 16 && coopmat_enabled && coopmat ? coopmat :
                              batch <= 4 ? ctx->device->pipeline_trellis_matvec[bits] : ctx->device->pipeline_trellis_matmul[bits];
             ggml_pipeline_request_descriptor_sets(ctx, product, 1);
@@ -414,6 +449,21 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
         }
         ggml_vk_sync_buffers(ctx, subctx);
         ggml_vk_trellis_stamp(ctx, subctx, TRELLIS_PROFILE_PRODUCT);
+        if (fuse_out) {
+            vk_trellis_fused out_pc = {};
+            out_pc.k = n;
+            out_pc.first = pc.first;
+            out_pc.offsets[1] = offset(post);
+            out_pc.offsets[3] = offset(op);
+            out_pc.len = desc[1];
+            out_pc.batch = batch;
+            out_pc.scale = float(1.0 / std::sqrt(double(desc[1])));
+            auto & fused_out = ctx->device->pipeline_trellis_fused_out;
+            ggml_pipeline_request_descriptor_sets(ctx, fused_out, 1);
+            ggml_vk_dispatch_pipeline(ctx, subctx, fused_out, { b, post_buf, pout_buf, dst_buf }, out_pc, { n / out_pc.len, batch, 1 });
+            ggml_vk_trellis_stamp(ctx, subctx, TRELLIS_PROFILE_OUTPUT);
+            continue;
+        }
         ggml_vk_trellis_side(ctx, subctx, b, a, n, batch, desc, desc + 7, desc[6], true);
         ggml_vk_trellis_stamp(ctx, subctx, TRELLIS_PROFILE_ROTATE_OUT);
 

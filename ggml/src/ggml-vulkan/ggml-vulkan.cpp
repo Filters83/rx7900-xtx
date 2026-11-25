@@ -3312,6 +3312,10 @@ void ggml_vk_load_shaders(vk_device& device, vk_pipeline requested) {
     ggml_vk_create_pipeline(device, device->pipeline_norm_f32, "norm_f32", norm_f32_len, norm_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_group_norm_f32, "group_norm_f32", group_norm_f32_len, group_norm_f32_data, "main", 2, sizeof(vk_op_push_constants), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_trellis_input, "trellis_input", trellis_input_len, trellis_input_data, "main", 4, sizeof(vk_trellis_io), {256, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_trellis_fused_in, "trellis_fused_in", trellis_fused_in_len, trellis_fused_in_data, "main", 4, sizeof(vk_trellis_fused), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_trellis_fused_in_q8, "trellis_fused_in_q8", trellis_fused_in_q8_len, trellis_fused_in_q8_data, "main", 4, sizeof(vk_trellis_fused), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_trellis_fused_in_q8_packed, "trellis_fused_in_q8_packed", trellis_fused_in_q8_packed_len, trellis_fused_in_q8_packed_data, "main", 4, sizeof(vk_trellis_fused), {1, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_trellis_fused_out, "trellis_fused_out", trellis_fused_out_len, trellis_fused_out_data, "main", 4, sizeof(vk_trellis_fused), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_trellis_output, "trellis_output", trellis_output_len, trellis_output_data, "main", 4, sizeof(vk_trellis_io), {256, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_trellis_store_rows, "trellis_store_rows", trellis_store_rows_len, trellis_store_rows_data, "main", 6, sizeof(vk_trellis_io), {256, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_trellis_block, "trellis_block", trellis_block_len, trellis_block_data, "main", 1, sizeof(vk_trellis_transform), {1, 1, 1}, {}, 1);
