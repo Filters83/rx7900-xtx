@@ -28,7 +28,7 @@ static bool ggml_vk_trellis_residual_enabled() {
 }
 
 static bool ggml_vk_trellis_use_wide(const vk_device & device, const ggml_tensor * op) {
-    static const bool enabled = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_MM_WIDE"); return opt && std::strcmp(opt, "1") == 0; }();
+    static const bool enabled = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_MM_WIDE"); return !opt || std::strcmp(opt, "0") != 0; }();
     if (!enabled || op->op != GGML_OP_TRELLIS || ggml_nrows(op) < VK_TRELLIS_WIDE_BATCH ||
         !ggml_is_trellis_type(op->src[0]->type) || !ggml_vk_trellis_coopmat_enabled() ||
         !ggml_vk_trellis_mm_enabled() || ggml_vk_trellis_residual_enabled() ||
@@ -209,7 +209,7 @@ static void ggml_vk_trellis_side(ggml_backend_vk_context * ctx, vk_context & sub
     if (pc.m == 1 && pc.nparts == 0 && pc.len <= VK_TRELLIS_BLOCK_LIMIT) {
         static const bool shuffle = [] {
             const char * opt = std::getenv("GGML_VK_TRELLIS_BLOCK_SHUFFLE");
-            return opt && std::strcmp(opt, "1") == 0;
+            return !opt || std::strcmp(opt, "0") != 0;
         }();
         auto & shuffle_block = ctx->device->pipeline_trellis_block_shuffle;
         const bool use_shuffle = shuffle && batch >= 16 && pc.len >= 32 && pc.len % 32 == 0 && shuffle_block;
@@ -305,10 +305,10 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
         for (int i = 0; i < 3; ++i) {
             pc.strides[i] = x->nb[i + 1] / sizeof(float);
         }
-        // GGML_VK_TRELLIS_FUSE=1, batches of up to 15 tokens with block transforms (kind 1, blocks of up to 4096):
+        // default (GGML_VK_TRELLIS_FUSE=0 turns it off), batches of up to 15 tokens with block transforms (kind 1, blocks of up to 4096):
         // input, input transform and int8 quantization in one launch, output transform and output in another
         // (trellis_fused.comp, one workgroup per block and token)
-        static const bool fuse_enabled = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_FUSE"); return opt && std::strcmp(opt, "1") == 0; }();
+        static const bool fuse_enabled = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_FUSE"); return !opt || std::strcmp(opt, "0") != 0; }();
         const int32_t * side_in = desc + 3;
         const bool fuse_in = fuse_enabled && batch < 16 && side_in[0] == 1 && side_in[1] > 0 && side_in[1] <= int32_t(VK_TRELLIS_BLOCK_LIMIT) &&
                              side_in[1] % 16 == 0 && k % side_in[1] == 0;
@@ -348,11 +348,11 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
         const size_t q8_size = ggml_vk_trellis_quant_size(ctx->device, op);
         static const bool packed_enabled = [] {
             const char * opt = std::getenv("GGML_VK_TRELLIS_Q8_PACKED");
-            return opt && std::strcmp(opt, "1") == 0;
+            return !opt || std::strcmp(opt, "0") != 0;
         }();
         static const bool verify_cm_enabled = [] {
             const char * opt = std::getenv("GGML_VK_TRELLIS_VERIFY_CM");
-            return opt && std::strcmp(opt, "1") == 0;
+            return !opt || std::strcmp(opt, "0") != 0;
         }();
         auto & packed_product = ctx->device->pipeline_trellis_matvec_q8x4_packed[bits];
         // 2-4 tokens: trellis_verify_cm (one INT8 product column per token and input group); 5-16 tokens:
@@ -412,9 +412,9 @@ void ggml_vk_trellis(ggml_backend_vk_context * ctx, vk_context & subctx, const g
             // GGML_VK_TRELLIS_MM_RESIDUAL=1: also multiply the FP16 rounding residuals of the activations
             auto & fp16_product = ggml_vk_trellis_residual_enabled() && ctx->device->pipeline_trellis_mm_res_cm1[bits]
                                 ? ctx->device->pipeline_trellis_mm_res_cm1[bits] : ctx->device->pipeline_trellis_mm_cm1[bits];
-            // GGML_VK_TRELLIS_MM_BIG=1: 128 outputs x 256 tokens per workgroup (trellis_mm_big.comp) for wide chunks of
+            // GGML_VK_TRELLIS_MM_BIG=0 turns off the default 128 outputs x 256 tokens per workgroup (trellis_mm_big.comp) for wide chunks of
             // products with at least GGML_VK_TRELLIS_MM_BIG_MIN such workgroups (default 0)
-            static const bool big_enabled = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_MM_BIG"); return opt && std::strcmp(opt, "1") == 0; }();
+            static const bool big_enabled = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_MM_BIG"); return !opt || std::strcmp(opt, "0") != 0; }();
             static const uint32_t big_min_groups = [] { const char * opt = std::getenv("GGML_VK_TRELLIS_MM_BIG_MIN"); return opt ? uint32_t(std::atoi(opt)) : 0u; }();
             const bool big = wide_chunk && big_enabled && ctx->device->pipeline_trellis_mm_big_cm1[bits] &&
                              CEIL_DIV(n, 128) >= big_min_groups;

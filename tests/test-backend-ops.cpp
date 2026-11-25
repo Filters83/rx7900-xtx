@@ -2506,7 +2506,7 @@ struct test_trellis : public test_case {
     }
 
     // the CUDA kernels round the activations to FP16, with one scale per 128 inputs; the Vulkan decode and verify
-    // path (up to 4 tokens, up to 16 with GGML_VK_TRELLIS_VERIFY_CM=1) quantizes them to int8 with one scale per 16
+    // path (up to 16 tokens; up to 4 with GGML_VK_TRELLIS_VERIFY_CM=0) quantizes them to int8 with one scale per 16
     // inputs (NMSE about 2e-5; full NariQ 3.0 bpw model, logits against the CPU: mean KL 4e-5, same top-1 at 31 of 31
     // positions)
     double max_nmse_err() override {
