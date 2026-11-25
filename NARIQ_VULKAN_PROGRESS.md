@@ -216,7 +216,7 @@ pp512 713,00 → 725,61 (+1,8%), pp8192 674,01 → 705,90 (+4,7%), pp512 a profo
 
 C8 usa `trellis_states8` per estrarre otto stati da due parole per lane in TRL1-4. Applica la stessa funzione di decodifica a ogni stato e usa `trellis_decode4` in TRL5-6. La modifica si applica ai prodotti cooperativi da 128 e 256 token e alla variante con residuo FP16.
 
-Confronto A-B-B-A sulla RX 9070 contro C7 `09b633ca2`, con prefill a 256 token e Hadamard con shuffle in entrambe le build. pp512 702,96 -> 730,60 t/s (+3,9 %), pp8192 683,90 -> 696,88 t/s (+1,9 %), pp512 a profondità 32768 478,68 -> 498,95 t/s (+4,2 %). tg64 25,04 -> 24,56 t/s (-1,9 %) nel breve e 21,70 -> 21,59 t/s (-0,5 %) a profondità 32768. Picco dedicato B3 11,84 -> 11,84 GiB. Tutti i 65 layer del modello sono stati caricati su Vulkan0.
+Confronto A-B-B-A sulla RX 9070 contro C7 `439e39c60`, con prefill a 256 token e Hadamard con shuffle in entrambe le build. pp512 702,96 -> 730,60 t/s (+3,9 %), pp8192 683,90 -> 696,88 t/s (+1,9 %), pp512 a profondità 32768 478,68 -> 498,95 t/s (+4,2 %). tg64 25,04 -> 24,56 t/s (-1,9 %) nel breve e 21,70 -> 21,59 t/s (-0,5 %) a profondità 32768. Picco dedicato B3 11,84 -> 11,84 GiB. Tutti i 65 layer del modello sono stati caricati su Vulkan0.
 
 Vulkan 416/416 anche con residuo FP16, CTest 4/4. Confronto CPU con test-trellis-model: 31/31 top-1 e stessi token greedy, KL massima 0,00006238. Su 385 token, top-1 100% e KL massima 0,000037. WikiText-2, 40 finestre, PPL 6,2456.
 
@@ -226,7 +226,7 @@ Nel profilo A-B-B-A, sostituire temporaneamente il calcolo del valore dei pesi a
 
 ## Confronto C8 con il profilo OpenClaw di produzione
 
-Test chat in streaming su RX 9070 con Unsloth Qwen3.8-27B UD-Q2_K_XL v3.1 su d4b007d e Qwen3.8-27B NariQ 3.0 bpw su 48739f77c. Entrambi riproducono il profilo del launcher con contesto 114.688, cache KV q4_0, Flash Attention, batch e microbatch 512, DFlash2 a tre token, thinking medium e proiettore su CPU. Modelli principali e draft su Vulkan0. I prompt lunghi contengono estratti identici di documentazione e sorgenti del fork. Una misura per caso, a livello di llama-server, con richieste testuali e seriali.
+Test chat in streaming su RX 9070 con Unsloth Qwen3.8-27B UD-Q2_K_XL v3.1 su d4b007d e Qwen3.8-27B NariQ 3.0 bpw su 805178e04. Entrambi riproducono il profilo del launcher con contesto 114.688, cache KV q4_0, Flash Attention, batch e microbatch 512, DFlash2 a tre token, thinking medium e proiettore su CPU. Modelli principali e draft su Vulkan0. I prompt lunghi contengono estratti identici di documentazione e sorgenti del fork. Una misura per caso, a livello di llama-server, con richieste testuali e seriali.
 
 | Richiesta | Token nuovi / in cache, Unsloth e C8 | Prefill t/s Unsloth / C8 | Prefill s Unsloth / C8 | Generazione t/s Unsloth / C8 | Primo token s Unsloth / C8 |
 | --- | --- | ---: | ---: | ---: | ---: |
