@@ -36,10 +36,14 @@ float trellis_value(uint tile, uint row, uint col) {
     return trellis_grid(state);
 }
 
+uint trellis_state_start(uint p) {
+    const uint end = (p + 1) * BITS;
+    return end >= 16 ? end - 16 : end + TILE_BITS - 16;
+}
+
 // The four cyclic states starting at state p of a tile.
 uvec4 trellis_states4(uint tile, uint p) {
-    const uint end = (p + 1) * BITS;
-    const uint start = end >= 16 ? end - 16 : end + TILE_BITS - 16;
+    const uint start = trellis_state_start(p);
     const uint word = start / 32;
     const uint offset = start % 32;
     const uint hi = codes[tile + word];
@@ -53,6 +57,20 @@ uvec4 trellis_states4(uint tile, uint p) {
         states[j] = bit <= 16 ? window >> (16 - min(bit, 16)) : (window << 2) | ((lo >> ((30 - offset) & 31)) & 3);
     }
     return states;
+}
+
+// For TRL1-4 and p a multiple of eight, all eight states fit in two consecutive words.
+void trellis_states8(uint tile, uint p, out uvec4 states_lo, out uvec4 states_hi) {
+    const uint start = trellis_state_start(p);
+    const uint word = start / 32;
+    const uint offset = start % 32;
+    const uint hi = codes[tile + word];
+    const uint lo = codes[tile + (word + 1 == TILE_WORDS ? 0 : word + 1)];
+    const uint window_lo = (hi << offset) | (lo >> (32 - offset));
+    const uint window_hi = (window_lo << (4 * BITS)) | ((lo << offset) >> (32 - 4 * BITS));
+    const uvec4 shifts = uvec4(16, 16 - BITS, 16 - 2 * BITS, 16 - 3 * BITS);
+    states_lo = uvec4(window_lo) >> shifts;
+    states_hi = uvec4(window_hi) >> shifts;
 }
 
 vec4 trellis_decode4(uint tile, uint p) {

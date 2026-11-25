@@ -79,8 +79,13 @@ void main() {
     for (uint tile_col = k_part * chunk + split; tile_col < col_end; tile_col += 4) {
         const uint tile = (tile_base + tile_col) * TILE_WORDS;
         const float scale = float(scales[p.scale_offset + tile_col]);
-        const uvec4 s_lo = trellis_states4(tile, 8 * lane);
-        const uvec4 s_hi = trellis_states4(tile, 8 * lane + 4);
+        uvec4 s_lo, s_hi;
+        if (MAX_TOKENS == 1 && BITS <= 4) {
+            trellis_states8(tile, 8 * lane, s_lo, s_hi);
+        } else {
+            s_lo = trellis_states4(tile, 8 * lane);
+            s_hi = trellis_states4(tile, 8 * lane + 4);
+        }
 #ifdef TRELLIS_Q8_PACKED
         const uint b_lo = trellis_pack_weights(s_lo);
         const uint b_hi = trellis_pack_weights(s_hi);
