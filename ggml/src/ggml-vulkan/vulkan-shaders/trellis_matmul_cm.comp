@@ -72,8 +72,16 @@ void decode_tile(const uint slot, const uint lane, const uint row_tile0, const u
     const uint kt = slot % K_TILES;
     if (rt < row_tiles && k0 + kt < k_end) {
         const uint tile = ((row_tile0 + rt) * tile_k + k0 + kt) * TILE_WORDS;
-        const vec4 lo = trellis_decode4(tile, 8 * lane);
-        const vec4 hi = trellis_decode4(tile, 8 * lane + 4);
+        vec4 lo, hi;
+        if (BITS <= 4) {
+            uvec4 states_lo, states_hi;
+            trellis_states8(tile, 8 * lane, states_lo, states_hi);
+            lo = vec4(trellis_grid(states_lo.x), trellis_grid(states_lo.y), trellis_grid(states_lo.z), trellis_grid(states_lo.w));
+            hi = vec4(trellis_grid(states_hi.x), trellis_grid(states_hi.y), trellis_grid(states_hi.z), trellis_grid(states_hi.w));
+        } else {
+            lo = trellis_decode4(tile, 8 * lane);
+            hi = trellis_decode4(tile, 8 * lane + 4);
+        }
         const uint row = rt * 16 + lane / 4;
         [[unroll]] for (uint i = 0; i < 4; ++i) {
             const uint col = kt * 16 + 2 * (lane % 4) + i % 2 + 8 * (i / 2);

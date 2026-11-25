@@ -212,6 +212,18 @@ $env:GGML_VK_TRELLIS_BLOCK_SHUFFLE = '1'
 
 pp512 713,00 → 725,61 (+1,8%), pp8192 674,01 → 705,90 (+4,7%), pp512 a profondità 32768 478,03 → 482,66 (+1,0%) t/s. Vulkan 416/416 e CTest 4/4. WikiText-2 40 finestre PPL 6,2456. A 385 token contro CPU, top-1 100% e KL massima 0,000037, come C6. La fusione di SwiGLU con la preparazione e Hadamard del down ha attivato 64/64 coppie, ma ha dato -1,35% su pp512 e +1,61% su pp8192. Il prototipo è archiviato in build/c7. [Registro delle prove](NARIQ_PIANO.md)
 
+## Riuso delle parole Trellis nel prefill FP16
+
+C8 usa `trellis_states8` per estrarre otto stati da due parole per lane in TRL1-4. Applica la stessa funzione di decodifica a ogni stato e usa `trellis_decode4` in TRL5-6. La modifica si applica ai prodotti cooperativi da 128 e 256 token e alla variante con residuo FP16.
+
+Confronto A-B-B-A sulla RX 9070 contro C7 `09b633ca2`, con prefill a 256 token e Hadamard con shuffle in entrambe le build. pp512 702,96 -> 730,60 t/s (+3,9 %), pp8192 683,90 -> 696,88 t/s (+1,9 %), pp512 a profondità 32768 478,68 -> 498,95 t/s (+4,2 %). tg64 25,04 -> 24,56 t/s (-1,9 %) nel breve e 21,70 -> 21,59 t/s (-0,5 %) a profondità 32768. Picco dedicato B3 11,84 -> 11,84 GiB. Tutti i 65 layer del modello sono stati caricati su Vulkan0.
+
+Vulkan 416/416 anche con residuo FP16, CTest 4/4. Confronto CPU con test-trellis-model: 31/31 top-1 e stessi token greedy, KL massima 0,00006238. Su 385 token, top-1 100% e KL massima 0,000037. WikiText-2, 40 finestre, PPL 6,2456.
+
+Nel profilo A-B-B-A, sostituire temporaneamente il calcolo del valore dei pesi a partire dallo stato con un valore sintetico, mantenendo la lettura e l'estrazione degli stati, ha ridotto il tempo del prodotto Trellis da 520,42 a 490,13 ms (-5,8%). La prova stima il costo di quella parte del decoder nel kernel attuale. Il prototipo diagnostico è archiviato in `build/c8/no-hash.patch`.
+
+[Registro delle prove](NARIQ_PIANO.md). Log locali in `build/c8`.
+
 ## Riproduzione delle prove
 
 Da un nuovo checkout Windows x64 del branch, usare `scripts\build-vulkan-windows.cmd` con MSVC e Vulkan SDK. Lo script crea gli eseguibili in `build/bin`. Nel checkout locale qui sotto si usa la build già pronta in `build/packaging-x64/bin`. Sostituire `$build` con `'.\build'` dopo una compilazione tramite script. Eseguire dalla radice del repository, con il GGUF 3.0 bpw disponibile in `models`.
