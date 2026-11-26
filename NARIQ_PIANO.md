@@ -322,6 +322,13 @@ Il 26/11 l'email d'autore dei commit non ancora pubblicati è stata portata all'
 
 Voci più recenti in alto. Formato: data, chi, commit o "non committato", cosa, numeri (riferimento → candidato), esito.
 
+- **27/11/2026, Claude**, commit di questa voce (solo registro; patch e note in `build/p1/archive`): altre prove su generazione e prefill, tutte scartate.
+  - **Prodotto a 1 token dopo l'hash a 24 bit** (ISA): per 8 pesi e lane ~14 istruzioni di estrazione, 24 di hash (`v_mul_u32_u24`, shift, `v_mad_u32_u24`), 8 `and`, 8 `dot4`, ~20 di chiusura del tile e ciclo; il kernel gira in wave64. Due tile per iterazione: 88 → 89,4 µs. Wave32 forzato: 88 → 99,6 µs.
+  - **Prefill, modello contro Unsloth** (llama-bench, stessa build `d127cb754`, cache q4_0, FA): pp512 1127,6 contro 1159,7 (97%); pp512 a 32K 777,8 contro 796,2 (98%). Il divario del server a 32K (818 contro 898, 91%) non è nei prodotti: stimando il solo modello, NariQ ha ~4,9 s di lavoro in più nel server, Unsloth ~2,3. Indiziata la passata della bozza sul prompt (micro-batch della bozza limitato a 64 per i target Trellis, `70dc70ae1`).
+  - **Riserva della bozza su `n_outputs_max` e micro-batch 512** (`dflash-reserve-ubatch512.patch`): VRAM 14,5 → 15,6 GB + 408 MB condivisi, prefill 32K 818 → 273 t/s, accettazione cambiata. L'allocatore cresce comunque in esecuzione. Scartata.
+  - **Iniezione del prompt nella bozza a blocchi di `n_batch`** (`dflash-inject-batch.patch`, con il controllo non causale rilassato per i lotti di feature DFlash): generazione, accettazione e VRAM identiche, prefill 32K 818 → 805 (rumore). Il costo fisso per chiamata non è la causa. Scartata.
+  - **Esito**: build invariata (`d02cd6d2e` in OpenClaw). Resta aperto il ~7% di prefill del server, probabilmente nel lavoro della bozza sul prompt a micro-batch 64: per toglierlo serve un grafo della bozza che calcoli la testa solo sulle righe di uscita e che non allarghi la memoria.
+
 - **27/11/2026, Claude**, `d02cd6d2e` e commit di questa voce: prova reale con Jarvis, report di Jarvis, narrow-N, hash a 24 bit (A5c / G3 risolti).
   - **Prova reale OpenClaw** (`logs\local\llama.err.log`, build `c3c2bf7eb`, bozza 6): 70 richieste, generazione 120.793 token in 2.459 s = 49,1 t/s (per richiesta 35-78, mediana 51); accettazione della bozza 35,3% (suite 40-46%); prefill dei blocchi ≥ 1.000 token 563 t/s su contesti già lunghi. Nessun errore. Con Chrome aperto llama-server aveva 477 MB in memoria condivisa (normale 110-150): chiuso Chrome, 154 MB. Bozza ferma a 6 per il margine di VRAM.
   - **Composizione del ciclo**: pp7 (verifica di 7 token) 156 t/s = 44,9 ms su un ciclo di 51-52 ms (suite, chat): bozza e resto ~13%.
