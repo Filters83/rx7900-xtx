@@ -322,6 +322,12 @@ Il 26/11 l'email d'autore dei commit non ancora pubblicati è stata portata all'
 
 Voci più recenti in alto. Formato: data, chi, commit o "non committato", cosa, numeri (riferimento → candidato), esito.
 
+- **27/11/2026, Claude**, commit di questa voce (solo registro): costo della bozza nel prefill del server.
+  - **Server senza bozza** (suite `build/g1`, nuova opzione `-NoDraft`; build `d127cb754`): prefill a 32K NariQ 905,1 t/s (35,52 s), Unsloth 937,8 (34,28 s), 96,5%; prompt da 153 token 333 contro 455 t/s; tg 29,8 contro 39,0. Con la bozza (n-max 6 / 3): NariQ 816-818 t/s (39,4 s, +3,8 s, +11%), Unsloth 898 (35,8 s, +1,5 s, +4%). Il divario del prefill nel server è il costo della bozza, maggiore per NariQ.
+  - **Testa della bozza**: i 65.536 id della bozza sono sparsi su tutte le 16 bande della testa Trellis (13.936 nella prima, 449-754 nelle ultime): ritagliare le bande toglierebbe ~15% del vocabolario della bozza. Durante il prompt la bozza non calcola la testa (ramo di iniezione: solo K/V), quindi una testa più piccola non toccherebbe il prefill.
+  - **Limite del micro-batch della bozza** (variabile provvisoria, non committata): 128 contro 64, prefill a 32K 813,8 contro 816,5 t/s, VRAM 14,73 contro 14,50 GB, accettazione cambiata. Neanche la dimensione dei pezzi è la causa.
+  - **Ipotesi non verificata**: con la bozza il target copia in RAM le feature di 5 strati a ogni blocco da 512 token e si sincronizza; il grafo NariQ, con più lanci per strato, paga di più la registrazione sulla CPU esposta. Da verificare con un profilo CPU/GPU del prefill con bozza.
+
 - **27/11/2026, Claude**, commit di questa voce (solo registro; patch e note in `build/p1/archive`): altre prove su generazione e prefill, tutte scartate.
   - **Prodotto a 1 token dopo l'hash a 24 bit** (ISA): per 8 pesi e lane ~14 istruzioni di estrazione, 24 di hash (`v_mul_u32_u24`, shift, `v_mad_u32_u24`), 8 `and`, 8 `dot4`, ~20 di chiusura del tile e ciclo; il kernel gira in wave64. Due tile per iterazione: 88 → 89,4 µs. Wave32 forzato: 88 → 99,6 µs.
   - **Prefill, modello contro Unsloth** (llama-bench, stessa build `d127cb754`, cache q4_0, FA): pp512 1127,6 contro 1159,7 (97%); pp512 a 32K 777,8 contro 796,2 (98%). Il divario del server a 32K (818 contro 898, 91%) non è nei prodotti: stimando il solo modello, NariQ ha ~4,9 s di lavoro in più nel server, Unsloth ~2,3. Indiziata la passata della bozza sul prompt (micro-batch della bozza limitato a 64 per i target Trellis, `70dc70ae1`).
