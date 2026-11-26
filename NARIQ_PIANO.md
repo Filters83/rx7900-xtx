@@ -200,7 +200,7 @@ Stato: `da fare`, `in corso (chi)`, `fatto`, `scartato`. Le stime di guadagno so
 | A4 | Fondere input, rotazione e uscita con il prodotto | bassa priorità | Tutto ciò che non è prodotto vale 5,2 ms per token |
 | A5a | **fatto** (`565d38c7f`, +33%). **Prodotto con attivazioni int8 e `dot4`**: un passaggio prima del prodotto quantizza le attivazioni ruotate in int8 per gruppi da 16 (scala float e somma intera per gruppo), nell'ordine in cui le leggono i lane (colonne 2q, 2q+1, 2q+8, 2q+9 di ogni tile). Nel prodotto, per ogni peso: `b = (h >> 2) & 0x3f3f3f3f` e `acc += dot4(b, a_rep)` con `a_rep` = byte dell'attivazione replicato 4 volte (`v_perm`), meno `126 * somma_attivazioni` per tile; scala tile × scala attivazioni in float una volta per tile | da fare | Da ~15 a ~9 istruzioni per peso e una lettura di attivazioni invece di due. Atteso: prodotto da ~52 a ~30-35 ms, generazione ~25-28 t/s. Cambia la numerica (come q8_1 in llama.cpp): controllare logits CPU/Vulkan e KL |
 | A5b | Riuso delle parole Trellis fra le due finestre di una lane | fatto | Due letture dirette nel kernel da un token TRL1–4. `tg64` +0,9% nel breve, stabile a 32K. Shuffle scartato dopo A/B sulla RX 9070 |
-| A5c | Moltiplicazione dello stato (`state * 0x83dcd12d`, 32 bit, un quarto di velocità su RDNA): cercare una forma che il compilatore non ricomponga | da fare | Spezzarla in due prodotti a 16 bit non serve: il compilatore li ricompone in una sola moltiplicazione a 32 bit |
+| A5c | Moltiplicazione dello stato (`state * 0x83dcd12d`, 32 bit, un quarto di velocità su RDNA): cercare una forma che il compilatore non ricomponga | scartato (26/11: 24 bit e 16 bit provati, il compilatore torna sempre a `v_mul_lo_u32`) | Spezzarla in due prodotti a 16 bit non serve: il compilatore li ricompone in una sola moltiplicazione a 32 bit |
 
 ### Fase B: verifica DFlash2 (2-4 colonne)
 
@@ -208,9 +208,9 @@ Stato: `da fare`, `in corso (chi)`, `fatto`, `scartato`. Le stime di guadagno so
 | --- | --- | --- | --- |
 | B1 | Misurare DFlash2 con 3 token anticipati su NariQ | fatto | Dopo B2: senza bozza 24,0, bozza 2/3/4 token 38,7 / 42,2 / 17,1 t/s (prompt ripetitivo). Ciclo ~87 ms |
 | B4 | Profilo di un ciclo DFlash2 (modello a 4 token, bozza, teste di uscita) | fatto | Vedi "Stato attuale" e il registro del 25/11. Corrette le proiezioni da 48 righe (`902513980`) |
-| B5 | Estendere la verifica a 5–8 token (4–7 token draft) | da fare | Riutilizzare la tile dei pesi decodificata in due prodotti WMMA e conservare la stessa somma FP32 per gruppo. Confrontare separatamente forma 5120 → 17408 e D2, partendo da 4 token draft. |
+| B5 | Estendere la verifica a 5–8 token (4–7 token draft) | **fatto** (`4d45ef0ca`, F4 a 5-16 token; predefinita da `96d164cfd`) | Riutilizzare la tile dei pesi decodificata in due prodotti WMMA e conservare la stessa somma FP32 per gruppo. Confrontare separatamente forma 5120 → 17408 e D2, partendo da 4 token draft. |
 | B2 | Prodotto a più colonne: decodificare ogni peso una volta per tutte le colonne | fatto (`b14dae893`) | 4 token: TRL3 407 → 216 µs; 1 token invariato grazie a una variante dedicata | Con A5a ogni colonna in più costa un solo `dot4` per peso. Oggi `trellis_matvec` (batch ≤ 4) lancia un gruppo per token (`gl_WorkGroupID.y`) e decodifica i pesi una volta per token |
-| B3 | Scegliere i token anticipati (2-4) in base ai tempi misurati | da fare | |
+| B3 | Scegliere i token anticipati (2-4) in base ai tempi misurati | in corso: 5 meglio di 3 e 4 (G1 con F4 a 5-16 token); 6-8 da provare | |
 | B6 | Verifica a 4 token più economica | Idee 1 e 2 validate, opt-in | Rapporti 4/1 1,35 e 1,38. D2 37,23/40,32/39,90 t/s. Il traguardo 1,3 resta aperto. |
 
 ### Fase C: prefill
