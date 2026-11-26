@@ -91,7 +91,8 @@ struct llama_context {
 
     float * get_embeddings_layer_inp(uint32_t lid);
 
-    bool dflash_inject_features_async(llama_context & tgt, const int32_t * layer_ids, int32_t n_layers, int32_t n_tokens);
+    bool dflash_inject_features_async(llama_context & tgt, const int32_t * layer_ids, int32_t n_layers, int32_t n_tokens,
+                                      int32_t row0 = 0, int32_t n_rows = 0);
     void dflash_inject_features_clear();
 
     void flush();

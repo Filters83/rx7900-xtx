@@ -1220,9 +1220,14 @@ float * llama_context::get_embeddings_nextn_ith(int32_t i) {
     }
 }
 
-bool llama_context::dflash_inject_features_async(llama_context & tgt, const int32_t * layer_ids, int32_t n_layers, int32_t n_tokens) {
+bool llama_context::dflash_inject_features_async(llama_context & tgt, const int32_t * layer_ids, int32_t n_layers, int32_t n_tokens,
+                                                 int32_t row0, int32_t n_rows) {
     llm_graph_result * res = tgt.gf_res_prev_active;
-    if (res == nullptr || n_layers <= 0 || n_layers > llama_cparams::DFLASH_MAX_SRC || n_tokens <= 0) {
+    if (n_rows <= 0) {
+        n_rows = n_tokens - row0;
+    }
+    if (res == nullptr || n_layers <= 0 || n_layers > llama_cparams::DFLASH_MAX_SRC || n_tokens <= 0 ||
+            row0 < 0 || n_rows <= 0 || row0 + n_rows > n_tokens) {
         return false;
     }
 
@@ -1249,14 +1254,16 @@ bool llama_context::dflash_inject_features_async(llama_context & tgt, const int3
     for (int32_t k = 0; k < n_layers; ++k) {
         ggml_tensor * t = res->get_layer_inp(layer_ids[k]);
         cparams.dflash_src[k]      = t;
-        cparams.dflash_src_data[k] = t->data;
+        cparams.dflash_src_data[k] = (char *) t->data + (size_t) row0 * t->nb[1];
         cparams.dflash_src_buf[k]  = t->buffer;
     }
+    cparams.dflash_src_rows = n_rows;
     return true;
 }
 
 void llama_context::dflash_inject_features_clear() {
     cparams.dflash_n_src = 0;
+    cparams.dflash_src_rows = 0;
 }
 
 float * llama_context::get_embeddings_layer_inp(uint32_t lid) {
@@ -4330,6 +4337,11 @@ void llama_context::flush() {
 bool llama_dflash_inject_features_async(llama_context * ctx_dft, llama_context * ctx_tgt,
         const int32_t * layer_ids, int32_t n_layers, int32_t n_tokens) {
     return ctx_dft->dflash_inject_features_async(*ctx_tgt, layer_ids, n_layers, n_tokens);
+}
+
+bool llama_dflash_inject_features_rows_async(llama_context * ctx_dft, llama_context * ctx_tgt,
+        const int32_t * layer_ids, int32_t n_layers, int32_t n_tokens, int32_t row0, int32_t n_rows) {
+    return ctx_dft->dflash_inject_features_async(*ctx_tgt, layer_ids, n_layers, n_tokens, row0, n_rows);
 }
 
 void llama_dflash_inject_features_clear(llama_context * ctx_dft) {

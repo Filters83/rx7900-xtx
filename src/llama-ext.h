@@ -124,6 +124,9 @@ LLAMA_API float * llama_get_embeddings_layer_inp(struct llama_context * ctx, uin
 // read them instead of the batch embeddings. returns false if not possible (then nothing is armed)
 LLAMA_API bool llama_dflash_inject_features_async(struct llama_context * ctx_dft, struct llama_context * ctx_tgt,
         const int32_t * layer_ids, int32_t n_layers, int32_t n_tokens);
+// the same for rows [row0, row0 + n_rows) of that ubatch, so that a draft with a smaller ubatch takes it in parts
+LLAMA_API bool llama_dflash_inject_features_rows_async(struct llama_context * ctx_dft, struct llama_context * ctx_tgt,
+        const int32_t * layer_ids, int32_t n_layers, int32_t n_tokens, int32_t row0, int32_t n_rows);
 // submit work queued on the context's backends (e.g. output reads after a decode) without waiting, where the
 // backend supports it, so that it runs before work other contexts submit next
 LLAMA_API void llama_flush(struct llama_context * ctx);

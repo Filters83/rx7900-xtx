@@ -34,6 +34,7 @@ struct llama_cparams {
     struct ggml_tensor * dflash_src[DFLASH_MAX_SRC]      = {};
     void *               dflash_src_data[DFLASH_MAX_SRC] = {};
     void *               dflash_src_buf[DFLASH_MAX_SRC]  = {};
+    int32_t              dflash_src_rows = 0; // rows of the source tensors the next decode reads (0: all)
 
     float rope_freq_base;
     float rope_freq_scale;

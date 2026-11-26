@@ -605,9 +605,10 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
             // the target's layer inputs of this ubatch, read in place: per token, the layers side by side
             for (int k = 0; k < cparams.dflash_n_src; ++k) {
                 const ggml_tensor * src = cparams.dflash_src[k];
-                GGML_ASSERT(src->ne[1] == n_tokens && src->type == GGML_TYPE_F32);
-                // a leaf over the target's memory: no links into the target graph
-                ggml_tensor * leaf = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, src->ne[0], src->ne[1]);
+                const int64_t src_rows = cparams.dflash_src_rows > 0 ? cparams.dflash_src_rows : src->ne[1];
+                GGML_ASSERT(src_rows == n_tokens && src->type == GGML_TYPE_F32);
+                // a leaf over the target's memory (from row dflash_src_data): no links into the target graph
+                ggml_tensor * leaf = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, src->ne[0], n_tokens);
                 leaf->data   = cparams.dflash_src_data[k];
                 leaf->buffer = (ggml_backend_buffer_t) cparams.dflash_src_buf[k];
                 ggml_format_name(leaf, "dflash_target_feat-%d", k);

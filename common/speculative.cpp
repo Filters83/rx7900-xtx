@@ -1102,11 +1102,11 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
         for (uint32_t k = 0; k < target_layer_ids_n; ++k) {
             llama_set_embeddings_layer_inp(ctx_tgt, (uint32_t) target_layer_ids[k], true);
         }
-        // token batches that fit one ubatch are injected from the target's device tensors (process()), so
-        // their features need not cross to the host (PCIe): 5 layers x n_embd floats per token
+        // token batches that fit one target ubatch are injected from the target's device tensors (process(), in
+        // parts of the draft's ubatch when that is smaller), so their features need not cross to the host (PCIe):
+        // 5 layers x n_embd floats per token (NariQ, 32K-token prompt with a 64-token draft ubatch: 38.0 -> 37.25 s)
         if (dflash_dev_inject_enabled()) {
-            llama_set_embeddings_layer_inp_host_min_tokens(ctx_tgt,
-                    (int32_t) std::min(llama_n_ubatch(ctx_tgt), llama_n_ubatch(this->params.ctx_dft)));
+            llama_set_embeddings_layer_inp_host_min_tokens(ctx_tgt, (int32_t) llama_n_ubatch(ctx_tgt));
         }
 
         // DFlash2 reads its selector lattice from h_nextn and never consumes raw logits.
@@ -1207,7 +1207,48 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
             // a batch the target decoded as a single ubatch (a verify batch) is injected from the target's device
             // tensors, so the injection is queued behind the target graph without a host round trip
             // (LLAMA_DFLASH_DEV_INJECT=0 disables)
+            // a target ubatch larger than the draft's ubatch goes in parts of n_ubatch rows, all queued on the device
+            // (a draft ubatch capped at 64 for a trellis-coded target otherwise took the host path and synchronized
+            // the target after every prompt batch, so the target's next graph was recorded with the GPU idle)
             const bool dev_inject = dflash_dev_inject_enabled();
+            if (dev_inject && has_tokens && i_batch_beg[seq_id] == 0 && n_rows == n_tokens &&
+                    n_rows <= (int32_t) llama_n_ubatch(ctx_tgt) && n_rows > n_ubatch) {
+                llama_flush(ctx_tgt);
+                bool ok = true;
+                for (int32_t offset = 0; offset < n_rows && ok; offset += n_ubatch) {
+                    const int32_t n_chunk = std::min(n_ubatch, n_rows - offset);
+                    if (!llama_dflash_inject_features_rows_async(ctx_dft, ctx_tgt, target_layer_ids, (int32_t) target_layer_ids_n,
+                                                                 n_rows, offset, n_chunk)) {
+                        GGML_ASSERT(offset == 0 && "DFlash: device features of a later part not available");
+                        ok = false;
+                        break;
+                    }
+                    batch_inject.n_tokens = n_chunk;
+                    for (int32_t i = 0; i < n_chunk; ++i) {
+                        const llama_pos p = batch_in.pos[offset + i];
+                        batch_inject.pos[i] = p;
+                        if (is_mrope) {
+                            batch_inject.pos[1 * n_chunk + i] = p;
+                            batch_inject.pos[2 * n_chunk + i] = p;
+                            batch_inject.pos[3 * n_chunk + i] = 0;
+                        }
+                        batch_inject.n_seq_id[i]  = 1;
+                        batch_inject.seq_id[i][0] = seq_id;
+                        batch_inject.logits[i]    = false;
+                    }
+                    common_spec_trace("inject_call");
+                    const int32_t rc = llama_decode(ctx_dft, batch_inject);
+                    common_spec_trace("inject_submitted");
+                    llama_dflash_inject_features_clear(ctx_dft);
+                    if (rc != 0) {
+                        LOG_ERR("%s: llama_decode(ctx_dft) failed rc=%d (n_tokens=%d, device features, offset=%d)\n", __func__, rc, (int) n_chunk, (int) offset);
+                        return false;
+                    }
+                }
+                if (ok) {
+                    continue;
+                }
+            }
             if (dev_inject && has_tokens && i_batch_beg[seq_id] == 0 && n_rows == n_tokens &&
                     n_rows <= (int32_t) llama_n_ubatch(ctx_tgt) && n_rows <= n_ubatch &&
                     llama_dflash_inject_features_async(ctx_dft, ctx_tgt, target_layer_ids, (int32_t) target_layer_ids_n, n_rows)) {
