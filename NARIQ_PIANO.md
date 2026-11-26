@@ -62,7 +62,7 @@ Aggiornare questa sezione a ogni passaggio di consegne.
 - **F4 accettazione**. Sui prefissi fissi, overlap A/B 0,437/0,441, 0,545/0,544, 0,306/0,300 per posizione (10/8/8 coppie). Con F4, bozza 0,8 rispetto a 1,0 porta la chat da 55,17 a 60,03 t/s, codice da 55,28 a 54,43 e 32K da 52,92 a 53,25. Le impostazioni di avvio restano quelle del riferimento. Nel profilo GPU seriale, mediana dei grafi di verifica 55,66 -> 51,58 ms. Le operazioni Trellis a quattro token pesano 47,72 ms con F4, con 18,06 ms per up e 10,39 ms per down. Le bande della testa della bozza pesano 2,00 ms. I tempi del profilo includono l'overhead delle misure. Il prototipo che riusa la scala ed elimina una barriera è scartato dopo il microbenchmark. Log build/f4-accept.
 - **F4 conferma**. Bozza 0,8 confermata per chat breve nei prompt provati. 52,66 -> 54,21 t/s, accettazione 58,6% -> 61,7%, 6/9 coppie a favore di 0,8. Diagnostico TRL3 a 4 token, con output sintetici. Up 130,99 us con il kernel esatto, 72,52 us con hash e packing sostituiti e 60,11 us saltando anche le letture dei codici. Down 148,55 -> 93,59 -> 70,69 us nelle stesse prove. Il proxy senza WMMA è più lento e cambia il modo in cui il driver carica e usa i frammenti. Questi confronti localizzano il costo della decodifica e non sono una scomposizione additiva. Pack esatto a coppie in F4. trl3 5120 → 17408 132,06 -> 123,88 us. trl3 17408 → 5120 149,44 -> 141,18 us. trl4 5120 → 17408 133,23 -> 125,22 us. trl4 17408 → 5120 156,08 -> 147,14 us. Vulkan 416/416 e CTest 4/4. Le 31 righe dei logits coincidono bit per bit con F4 prima della modifica. Log build/f4-confirm.
 - **F4 pack chat**. F4 attiva in entrambe le build, bozza 0,8. Confronto server A-B-B-A su stessi prompt e seed. breve 55.13 -> 59.18 t/s (+7.35%), ciclo stimato 53.86 -> 50.17 ms, token DFlash2 1014/1552 in entrambi. 32K 50.24 -> 53.49 t/s (+6.46%), ciclo stimato 56.20 -> 52.79 ms, token DFlash2 494/816 in entrambi. Guadagno confermato sul server a 32K. Log build/f4-pack-server.
-- **Prossimo passo**. Lavorare sulla decodifica dei pesi Trellis a quattro token. Confrontare l'ISA per gli hash a 32 bit e verificare separatamente il carico dei codici e l'estrazione degli stati. La conferma della temperatura è conclusa. Usare 0,8 per la chat breve nel profilo sperimentale F4. Per il prefill F5 resta aperta.
+- **Prossimo passo**. Anthropic Claude segue G1 per generazione e verifica DFlash2 e P1 per il prefill, con confronto D2 contro Unsloth e profilo della build di riferimento.
 - **Script di prova del server**: lo scratchpad di Claude non è condiviso. Per una prova equivalente avviare `build\bin\llama-server.exe` con gli argomenti dell'esempio in `NARIQ_VULKAN_PROGRESS.md` più `--spec-type draft-dflash --spec-draft-model D:\Progetti\openclaw\models\qwen38-27b-dflash2\Qwen3.8-27B-DFlash2-Q4_K_M.gguf --spec-draft-device Vulkan0 --spec-draft-ngl 99 --spec-draft-type-k q4_0 --spec-draft-type-v q4_0 --spec-draft-n-max 3 --spec-accept rejection -bs --spec-draft-vocab 65536`, `-c 32768 -ub 512`, e inviare a `/completion` un prompt di ~1500 token con `n_predict` 256; leggere `timings.predicted_per_second`, `draft_n`, `draft_n_accepted`.
 
 ## Regole di lavoro
@@ -125,6 +125,67 @@ ctest --test-dir build --output-on-failure -R '^test-trellis'
 
 Logits del modello completo, CPU contro Vulkan (comandi in `NARIQ_VULKAN_PROGRESS.md`, sezione "Riproduzione delle prove"): top-1 31/31 e stessi token greedy. Annotare la KL massima.
 
+## Piano per accelerare insieme generazione e verifica DFlash2
+
+**Responsabile dell'esecuzione: Anthropic Claude.** Claude segue G1–G5 e aggiorna il registro dopo ogni prova.
+
+Analisi da consultare per G4 e per gli spunti sul prefill. [Report originale di Qwen4 Max](Qwen4Max-Analisys.txt).
+
+Il bersaglio comune è il decoder dei pesi Trellis. Il modello resta Qwen3.8-27B NariQ 3.0 bpw, con pesi compressi su Vulkan e confronto CPU sullo stesso GGUF. Il punto di partenza è la build 130, commit `6b782586a`, con i binari in `build/ref-bin`.
+
+### Riferimenti e traguardi
+
+| Misura | Punto di partenza | Primo traguardo |
+| --- | --- | --- |
+| Generazione senza bozza | 28,6 t/s breve, 27,7 t/s a 32K nei test precedenti | Almeno 30 t/s nel breve e guadagno ripetibile a 32K |
+| Generazione DFlash2 con F4 | 59,18 t/s breve, 53,49 t/s a 32K | Almeno 60 t/s a 32K con la stessa resa in token per ciclo |
+| Ciclo DFlash2 stimato a 32K | 52,79 ms | Circa 47 ms a pari resa, come riferimento per il traguardo da 60 t/s |
+
+I numeri senza bozza provengono da una build precedente. Prima di sviluppare, rimisurare tutti e quattro i casi sulla build 130 nella stessa sessione. Unsloth resta il riferimento finale con il protocollo D2. I traguardi intermedi servono a decidere dove proseguire. Il limite di VRAM resta quello del progetto.
+
+### Ordine delle prove
+
+1. **G1. Fissare il riferimento.** Misurare `tg64` a contesto breve e con profondità 32.768. Nel server usare gli stessi prompt D2, gli stessi seed e tre proposte DFlash2. F4 attiva in entrambi i lati del confronto con bozza. Congelare la temperatura della bozza per scenario e usare gli stessi valori in A e B. Registrare anche prefill, throughput, VRAM, token proposti e accettati, token prodotti per ciclo e durata del ciclo.
+2. **G2. Localizzare il costo del decoder.** Misurare separatamente, a uno e quattro token, le forme MLP `5120 → 17408` e `17408 → 5120` per TRL3/TRL4. Tenere un controllo sulle bande della testa. Confrontare l'ISA emessa dal driver e verificare letture dei codici, estrazione delle finestre e hash a 32 bit. Usare gli shader sintetici solo nei microbenchmark e interpretare le differenze come indizi, perché il compilatore può cambiare le altre istruzioni del kernel.
+3. **G3. Provare prima una modifica esatta riutilizzabile.** Per TRL1–4, verificare nell’ISA dei kernel da uno e quattro token se indici delle parole e shift delle finestre sono già calcolati fuori dal ciclo delle tile. Se restano ricalcoli, provare a calcolarli una volta per lane usando `trellis_words8`, `trellis_load8` e `trellis_states8_from`, già usati nel prodotto grande. Misurare questa sola modifica. Se l’estrazione resta costosa, provare su TRL3 le sequenze di 32 stati dell’issue #6, con shift costanti e letture delle parole di confine. Mantenere il percorso attuale per gli altri tipi. Valutare separatamente un hash esatto alternativo se l’ISA conferma un cambio nel lavoro effettivo. [Nari Labs #6, sequenze di 32 stati](https://github.com/nari-labs/nari-llama.cpp/issues/6#4-32-step-runs-every-window-becomes-a-compile-time-constant)
+4. **G4. Completare il percorso con più margine.** Se una modifica comune favorisce soprattutto un kernel, misurare separatamente il costo residuo dell'altro. A un token, esaminare il dot4 e le letture delle attivazioni. A quattro token, esaminare decodifica e preparazione delle tile per F4. Tenere separate implementazioni e misure quando i due kernel richiedono strategie diverse. I due guadagni devono convivere nella stessa build finale.
+   - **Prova F4 dopo G3.** Nei casi in cui è già attiva la fusione d’ingresso, unire la scrittura delle attivazioni ruotate FP32 e la quantizzazione F4 con scala comune su 32 input. Partire dalle due proiezioni MLP a quattro token. Confrontare byte delle attivazioni impacchettate e scale con il percorso attuale, poi eseguire i controlli del protocollo C. Misurare il tempo delle proiezioni e il ciclo DFlash2 con tre proposte sugli stessi prompt e seed. Registrare separatamente il risultato nel percorso con bozza.
+5. **G5. Verificare nel server.** Solo dopo i controlli numerici, ripetere `tg64` nel breve e a 32K, poi D2 nel breve e a 32K con F4. Usare l'ordine A-B-B-A per risolvere variazioni piccole e considerare separatamente prompt e seed. Se la candidata supera le prove, controllare prefill, VRAM e generazione con DFlash2 a 65K prima di proporla per OpenClaw.
+
+### Criteri di qualità e promozione
+
+- Per modifiche al solo decoder dei pesi, verificare che i valori interi decodificati coincidano con la CPU su tutte le posizioni della tile per TRL1–6. Includere finestre che attraversano una parola e il bordo ciclico, con valori che dipendono dalle ultime parole. Verificare che il nuovo schema copra tutte le 40 parole in TRL5 e le 48 in TRL6. Controllare gli offset effettivi prima di usare un funnel shift con shift a cinque bit. A parità di ordine del calcolo, richiedere anche logits bit per bit uguali alla build di riferimento sui prefissi forzati. Confrontare a microbatch 1 e 4, includendo una coda e un contesto lungo. [Nari Labs #6, caricamento delle tile](https://github.com/nari-labs/nari-llama.cpp/issues/6#1-bug-the-coded-tile-can-need-more-words-than-one-wave-has-lanes)
+- Eseguire il protocollo C, con suite Vulkan Trellis 416/416, CTest 4/4 e confronto `test-trellis-model` contro CPU. Misurare KL, top-1 e token greedy contro il riferimento. Verificare NaN, offload e percorso Vulkan nei log. Una variante che cambia scale o ordine di accumulo richiede un controllo aggiuntivo su KL e perplexity WikiText-2 sugli stessi campioni, oltre al confronto di accettazione su più prompt e seed. Applicare le tolleranze del protocollo esistente.
+- Per una modifica esatta nel percorso DFlash2, controllare proposte e accettazione a seed identico. Se divergono, acquisire logits e distribuzioni della bozza e del target sugli stessi prefissi prima di attribuire il cambiamento alla velocità. Per modifiche numeriche, confrontare anche accettazione, token prodotti per ciclo e andamento delle richieste su più seed.
+- Accettare una modifica comune se il guadagno è ripetibile almeno su uno dei due percorsi e l'altro resta entro la variabilità misurata. Il traguardo della fase richiede un miglioramento su entrambi i percorsi nella stessa build e assenza di regressioni riproducibili su qualità, prefill e VRAM. Registrare ogni prova, con preflight GPU e log, secondo le regole di lavoro.
+
+## Piano per avvicinare il prefill a Unsloth
+
+**Responsabile dell'esecuzione (per ora): Anthropic Claude.** Claude segue P1–P5 e aggiorna il registro dopo ogni prova.
+
+Il confronto principale è il tempo di prefill di una richiesta chat a cache fredda su RX 9070. Usare gli stessi messaggi a 32K e 65K del D2, con thinking e bozza configurati allo stesso modo per ogni A/B, Flash Attention, KV `q4_0`, batch e microbatch target 512 e contesto allocato a 114.688. Misurare anche il tempo al primo token, il prefill del seguito a cache calda e il picco VRAM dedicata e condivisa. Confrontare NariQ e Unsloth sulla stessa build quando il binario supporta entrambi, con lo stesso microbatch target e registrando l'eventuale differenza nella bozza.
+
+| D2 a cache fredda | NariQ, build 128 | Unsloth, build 128 | Primo traguardo | Traguardo successivo |
+| --- | --- | --- | --- | --- |
+| 32.145 token | 726 t/s, 44,27 s | 882 t/s, 36,44 s | Almeno 90% del throughput Unsloth | Arrivare entro il 5% |
+| 65.145 token | 644 t/s, 101,10 s | 751 t/s, 86,77 s | Almeno 90% del throughput Unsloth | Arrivare entro il 5% |
+
+Le velocità della build 128 sono il confronto storico. Il primo A/B rifissa i valori con il riferimento corrente. Valutare i traguardi sulla nuova sessione e a qualità, impostazioni e VRAM comparabili.
+
+### Ordine delle prove prefill
+
+1. **P1. Misurare riferimento e profilo.** Misurare NariQ e Unsloth nello stesso D2 a 32K e 65K. Per NariQ, acquisire anche `pp512`, `pp8192` e `pp512` con 32K già in cache per distinguere costo del prodotto e costo del contesto. Ripetere un campione con il profiler Vulkan attivo e separare preparazione delle attivazioni, rotazioni, prodotto Trellis e attenzione. Usare i run senza profiler per il throughput.
+2. **P2. Prima variante F5 sul prodotto 128 × 256.** Il kernel grande scrive già due FP16 per parola LDS e usa il *magic bias* FP32. Provare il bias FP16 dell’issue #6 costruendo il valore `1024 + 4 × somma` dalla somma dei quattro campi a 6 bit. Sottrarre esattamente 1528 per ottenere `4 × peso`, con il fattore già compensato nella preparazione delle attivazioni. Verificare tutte le somme intere da 0 a 252 e confrontare i valori FP16 delle tile prima di misurare. Controllare nell’ISA se la conversione a coppie riduce istruzioni o registri e verificare il costo delle scritture LDS. Misurare prima le due proiezioni MLP e poi il modello completo con `pp512` e `pp8192`. [Nari Labs #6, bias FP16](https://github.com/nari-labs/nari-llama.cpp/issues/6#3-cuts-to-the-per-value-cost-kept-the-prs-kernel-structure)
+3. **P3. Ridurre sincronizzazioni o traffico delle tile.** Sullo stesso kernel provare un passo K su quattro tile, con controlli sul limite LDS del driver, registri, occupazione e code K. Come prova separata, verificare se letture coalescenti dei codici comprimono il costo osservato. Includere almeno le due forme MLP grandi e una forma stretta. Tenere la variante solo se passa il caso con coda e migliora il modello a batch 512 e a contesto lungo. Usare le soglie `MM_BIG_MIN` e `MM_BIG_SPLIT` esistenti per confronti mirati quando il profilo mostra un problema di distribuzione del lavoro.
+4. **P4. Verificare Flash Attention a contesto lungo.** Verificare C4, cioè che l'attenzione con KV `q4_0` selezioni il percorso atteso anche con NariQ. Misurare quanto pesa a 32K e 65K prima di modificare il dispatch. Tenere comparabili i risultati D2 con e senza cache del prompt e annotare i token effettivamente elaborati.
+5. **P5. Qualificare e confrontare con Unsloth.** Ripetere D2 con la variante candidata prima a 32K, poi a 65K. Per guadagni sotto il 5% usare A-B-B-A. Riportare throughput, secondi di prefill e tempo al primo token, VRAM del processo, seguito a cache calda e controllo della generazione con e senza bozza. Ripetere con almeno un altro prompt lungo prima di proporre la build per OpenClaw.
+
+### Vincoli di qualità del prefill
+
+- Applicare il protocollo C, con Vulkan Trellis 416/416 e CTest 4/4. Per la conversione esatta delle coppie controllare i valori FP16 della tile. Per modifiche al passo K, confrontare logits e KL contro la CPU e il riferimento Vulkan. Controllare batch pieni e code, compreso il campione da 385 token, e una finestra lunga.
+- Ripetere la perplexity WikiText-2 sulle stesse 40 finestre, usare la stessa cache e confrontare gli stessi token nei test sui logits. Verificare offload, NaN, picchi VRAM dedicati e condivisi. Le varianti con attivazioni INT8 o altri cambi numerici restano sperimentali finché passano le tolleranze già previste. Il prototipo C6 a un solo termine INT8 ha fallito casi numerici, quindi la priorità va alle modifiche FP16.
+- Registrare ogni prova nel piano con il preflight. Se i lavori di generazione e prefill si svolgono in parallelo, coordinare una sola misura GPU e usare un riferimento annotato per ciascun confronto.
+
 ## Attività
 
 Stato: `da fare`, `in corso (chi)`, `fatto`, `scartato`. Le stime di guadagno sono ipotesi da verificare.
@@ -183,7 +244,7 @@ Priorità: prima la generazione, poi il prefill. TurboQuant/Turbo3, contesti 128
 | F2 | Senza codice: `--spec-draft-n-max` 4-5 e `--spec-draft-p-min` con n-max 3 | fatto (Claude, 25/11), con F3 | A temperatura 1,0 nessuna configurazione batte n-max 3 senza p-min; vedi registro |
 | F3 | B5: verifica WMMA int8 estesa a 5-8 token | fatto (Claude, 25/11), opt-in con `GGML_VK_TRELLIS_VERIFY_CM=1` | `trellis_verify16_cm.comp` per 5-16 token: TRL3 5120 → 17408 a 16 token 425 → 175 µs. Utile con accettazione alta (greedy +17%), neutro a temperatura 1,0 |
 | F4 | Verifica a quattro token e costo della testa della bozza | INT32 su 32 input validato come candidato opt-in | Guadagno ripetuto a 32K sullo stesso prompt. La testa della bozza e la verifica su più prompt restano aperte. |
-| F5 | Prefill: scritture LDS a 32 bit per coppie FP16 con conversione "magic bias" (somma dei byte OR 0x6400 in FP16, una sottrazione impacchettata per due pesi), poi passo K a 4 tile | da fare | |
+| F5 | Prefill: conversione diretta a coppie FP16 e passo K su quattro tile | da fare | P2 e P3. Il kernel attuale scrive già due FP16 per parola LDS. |
 
 ### Fase E: alternative
 
@@ -260,6 +321,12 @@ Il 26/11 l'email d'autore dei commit non ancora pubblicati è stata portata all'
 ## Registro delle prove
 
 Voci più recenti in alto. Formato: data, chi, commit o "non committato", cosa, numeri (riferimento → candidato), esito.
+
+- **26/11/2026, Claude**, build 130 (`6b782586a`): G1, riferimento, e bozza da 4-5 token con F4.
+  - **Disturbo**: con Steam aperto (GPU in uso, 2 GiB di VRAM occupati) pp4 63 ± 5 e tg64 a 32K 24,2: misure scartate. Prima di ogni prova controllare anche i programmi in background che usano la GPU.
+  - **llama-bench** (cache q4_0, FA, b/ub 512), A-B-B-A senza / con F4 (`GGML_VK_TRELLIS_VERIFY_I32`): pp4 79,05 / 79,16 → 92,87 (+17%), tg64 28,96 / 28,98 → 28,97. Con F4: pp512 947, a 32K pp512 695, tg64 27,70, pp4 71,14.
+  - **Server** (suite `build/g1`, copia di `build/f4-pack-server` con `--n-max`; F4 attiva, bozza 0,8, casi tune chat-42 / chat-173 / long-42, 384 token, ordine 3-4-5-5-4-3, somme di due run): n-max 3: 63,5 / 55,9 / 53,8 t/s, ciclo 49,9 / 49,9 / 52,5 ms, 3,17 / 2,79 / 2,82 token per ciclo. n-max 4: 48,4 / 50,2 / 50,6, ciclo 60,6 / 60,6 / 65,2 ms. n-max 5: 54,9 / 58,2 / 52,2, ciclo 62,3 / 61,7 / 66,2 ms, 3,42 / 3,59 / 3,46 token per ciclo. Prefill long-42 750-762 t/s.
+  - **Esito**: resta n-max 3. Con 4-5 token di bozza la verifica ha 5-6 token e F4 non si applica (`batch <= VK_TRELLIS_Q8_TOKENS`): il ciclo sale di ~11 ms. Con n-max 5 i token per ciclo crescono di ~20% (3,42-3,59 contro 2,79-3,17); se la verifica a 6 token costasse quanto quella a 4 con F4 (~50 ms), la generazione salirebbe a ~65-70 t/s. Prossimo passo: estendere F4 a 5-8 token (scala per 32 input e accumulo int32 anche in `trellis_verify16_cm`), poi ripetere questa suite.
 
 - **26/11/2026, Codex**, F4 pack chat sintesi server. F4 attiva in entrambe le build, bozza 0,8. Confronto server A-B-B-A su stessi prompt e seed. breve 55.13 -> 59.18 t/s (+7.35%), ciclo stimato 53.86 -> 50.17 ms, token DFlash2 1014/1552 in entrambi. 32K 50.24 -> 53.49 t/s (+6.46%), ciclo stimato 56.20 -> 52.79 ms, token DFlash2 494/816 in entrambi. Guadagno confermato sul server a 32K. Log build/f4-pack-server.
 
