@@ -27,8 +27,8 @@ Il cambio in OpenClaw si propone all'utente quando sono raggiunti i traguardi mi
 
 Aggiornare questa sezione a ogni passaggio di consegne.
 
-- **Ultimo aggiornamento**. 26/11/2026 sera, Claude: prefill 128 × 256 (`MM_BIG`), fusione delle fasi (`FUSE`), prodotto a 1 token più leggero (predefinito). Tabella di confronto con HIP PR #8 nel registro del 26/11. Con DFlash2 il ciclo non è cambiato: il margine residuo in generazione è nella verifica a 4 token e nella testa della bozza. HIP non può usare DFlash2 con NariQ (manca la condivisione di embedding e testa Trellis).
-- **Build di riferimento**. `build/bin` = ultimo commit, tutte le ottimizzazioni predefinite (nessuna variabile da impostare; `=0` per spegnerle una per una). `build/ref-bin` = C8 (`805178e04`) per i confronti, che invece richiede `GGML_VK_TRELLIS_Q8_PACKED=1 GGML_VK_TRELLIS_VERIFY_CM=1 GGML_VK_TRELLIS_MM_WIDE=1 GGML_VK_TRELLIS_BLOCK_SHUFFLE=1`. C7 (`439e39c60`) è archiviata in `build/c8/ref-before-c8` e C6 (`1eca433a3`) in `build/c7/ref-before-c7`.
+- **Ultimo aggiornamento**. 26/11/2026, Codex, F4 pack chat, misura server del pack esatto.
+- **Build di riferimento**. Usare `build/ref-bin` per i confronti con F4 e verificare il commit con `llama-server --version`. La verifica F4 resta opt-in con `GGML_VK_TRELLIS_VERIFY_I32=1`. La C8 con stamp 48739f77c, equivalente al commit riscritto 805178e04, è archiviata in `build/f4-pack-server/ref-before-f4`.
 - **Confronto iniziale in stile OpenClaw (D2, 25/11)**: `D:\Progetti\openclaw\tools\Run-Qwen38-VulkanAB.ps1 -Backends nariq-dflash3r,fork-dflash3r` con `OPENCLAW_AB_UB=512` (varianti `nariq` e `nariq-dflash3r` aggiunte allo script; la build NariQ si cambia con `OPENCLAW_AB_NARIQDIR`). Report `D:\Progetti\openclaw\runtime\benchmarks\20261124-212542-qwen38-backend-ab`. NariQ con DFlash2 3 token: generazione 25,4 / 23,9 / 25,6 t/s (breve / 32K / 65K), prefill 522 / 432, accettazione 35-44%, ciclo 84-90 ms, picco VRAM 14,96 GiB. Unsloth sul fork di produzione: 87,0 / 90,0 / 78,3, prefill 911 / 661, accettazione 44-55%, ciclo 27-32 ms, 14,06 GiB. **Su quella build NariQ DFlash2 rendeva poco**: un ciclo costa circa il doppio di un token (~41 ms) e produce ~2,1 token, quindi la generazione resta ~25 t/s come senza bozza. Senza bozza si risparmia anche ~1,3 GiB di VRAM.
 - **Dove sta il margine in generazione**: (1) il prodotto a 4 token (verifica) costa ~1,9 volte quello a 1 token: se scendesse a ~1,2 volte, con l'accettazione misurata DFlash2 darebbe ~40 t/s; (2) il prodotto a 1 token (~36 ms per token) limitato dal calcolo della decodifica (vedi "Valutazione onesta"). Entrambi dipendono dal costo della decodifica per peso, per questo la valutazione HIP (E1) è utile.
 - **Ultimi risultati**: generazione senza bozza 17,5 → 24,9 t/s; con DFlash2 a 3 token ~41 t/s sul prompt ripetitivo di prova (prima ~10). **Prefill (C3) 150 → ~602 t/s a contesto vuoto, 147 → 472 a 32K** (llama-bench): traguardo minimo del prefill raggiunto. Il percorso cooperativo è ora predefinito (`GGML_VK_TRELLIS_COOPMAT=0` per disattivarlo): non serve più impostare la variabile.
@@ -57,7 +57,12 @@ Aggiornare questa sezione a ogni passaggio di consegne.
   - [#5](https://github.com/nari-labs/nari-llama.cpp/pull/5) (CUDA): prefill INT8 su tensor core con scala potenza di 2 per riga, pp8192 675 → 1424 su RTX 5060 Ti; PPL 2,4655 → 2,4678.
   - Upstream llama.cpp ha integrato a settembre il prodotto int8 coopmat1 per RDNA3/RDNA4 ([ggml-org/llama.cpp#27952](https://github.com/ggml-org/llama.cpp/pull/27952)); riguarda i formati normali (Unsloth), già presente nella base del fork.
   - Confronto con noi (9070 non XT): tg64 ~24,5 contro 32,8 (XT; in proporzione ai CU ~29 qui), pp512 ~754 contro 1356 (~1190 qui). Da verificare con una misura sulla nostra scheda.
-- **Prossimo passo** (25/11, Claude, dopo F1-F3). Generazione: la verifica a 4 token (147 µs) è decodifica (~107) più parte WMMA (~40); idee rimaste: accumulo int32 su più tile con una scala di attivazione per 64 input che includa la scala dei pesi (meno conversioni e fma, qualità da misurare), testa Trellis della bozza (~3,5 ms per ciclo). Prefill: F5 (scritture LDS a 32 bit con conversione magic bias, passo K a 4 tile). Le opzioni C6-C8 e B6 sono ancora opt-in: renderle predefinite prima di D1.
+- **D2 su build 128**. 32K a cache fredda: NariQ 580,40 -> 726,08 t/s di prefill e 47,87 -> 45,70 t/s di generazione. Unsloth 878,22 -> 882,07 t/s di prefill e 100,26 -> 105,69 t/s di generazione. 65K a cache fredda: NariQ 531,11 -> 644,36 t/s di prefill e 44,00 -> 41,19 t/s di generazione. Unsloth 752,03 -> 750,75 t/s di prefill e 84,24 -> 87,35 t/s di generazione. Picco VRAM dedicata del processo 12,74 / 13,61 GiB (Unsloth / NariQ). Stessi prompt D2 e stessa build 128 per entrambi. Log build/d2-b128.
+- **F4 INT32**. Scala su 32 input e accumulo INT32 su due tile, opt-in. TRL3 a quattro token, up 150,94 -> 131,86 us (12,6% in meno), down 174,53 -> 149,22 us (14,5% in meno). TRL4 up 148,92 -> 133,17 us (10,6% in meno), down 172,68 -> 155,10 us (10,2% in meno). DFlash2 A-B-B-A sullo stesso seed: breve 50,99 -> 51,26 t/s, a 32K 46,50 -> 51,60 t/s. Ciclo stimato a 32K 62,41 -> 56,24 ms, accettazione 64,1% -> 64,1%. Vulkan 416/416, CTest 4/4, CPU top-1 31/31 e stessi token greedy. KL massima 0,00013943. Log build/f4-int32. Sul breve il ciclo stimato 59,15 -> 53,38 ms e l'accettazione 67,2% -> 58,6%. Il ciclo è stimato dai millisecondi di generazione per gruppo di tre proposte. A e B usano lo stesso binario sperimentale e le stesse richieste D2 con seed 42. L'opzione cambia la quantizzazione delle attivazioni della verifica. La variante a 64 input è stata archiviata dopo 410/416 casi. La build candidata è in `build/bin` e si attiva con `GGML_VK_TRELLIS_VERIFY_I32=1`.
+- **F4 accettazione**. Sui prefissi fissi, overlap A/B 0,437/0,441, 0,545/0,544, 0,306/0,300 per posizione (10/8/8 coppie). Con F4, bozza 0,8 rispetto a 1,0 porta la chat da 55,17 a 60,03 t/s, codice da 55,28 a 54,43 e 32K da 52,92 a 53,25. Le impostazioni di avvio restano quelle del riferimento. Nel profilo GPU seriale, mediana dei grafi di verifica 55,66 -> 51,58 ms. Le operazioni Trellis a quattro token pesano 47,72 ms con F4, con 18,06 ms per up e 10,39 ms per down. Le bande della testa della bozza pesano 2,00 ms. I tempi del profilo includono l'overhead delle misure. Il prototipo che riusa la scala ed elimina una barriera è scartato dopo il microbenchmark. Log build/f4-accept.
+- **F4 conferma**. Bozza 0,8 confermata per chat breve nei prompt provati. 52,66 -> 54,21 t/s, accettazione 58,6% -> 61,7%, 6/9 coppie a favore di 0,8. Diagnostico TRL3 a 4 token, con output sintetici. Up 130,99 us con il kernel esatto, 72,52 us con hash e packing sostituiti e 60,11 us saltando anche le letture dei codici. Down 148,55 -> 93,59 -> 70,69 us nelle stesse prove. Il proxy senza WMMA è più lento e cambia il modo in cui il driver carica e usa i frammenti. Questi confronti localizzano il costo della decodifica e non sono una scomposizione additiva. Pack esatto a coppie in F4. trl3 5120 → 17408 132,06 -> 123,88 us. trl3 17408 → 5120 149,44 -> 141,18 us. trl4 5120 → 17408 133,23 -> 125,22 us. trl4 17408 → 5120 156,08 -> 147,14 us. Vulkan 416/416 e CTest 4/4. Le 31 righe dei logits coincidono bit per bit con F4 prima della modifica. Log build/f4-confirm.
+- **F4 pack chat**. F4 attiva in entrambe le build, bozza 0,8. Confronto server A-B-B-A su stessi prompt e seed. breve 55.13 -> 59.18 t/s (+7.35%), ciclo stimato 53.86 -> 50.17 ms, token DFlash2 1014/1552 in entrambi. 32K 50.24 -> 53.49 t/s (+6.46%), ciclo stimato 56.20 -> 52.79 ms, token DFlash2 494/816 in entrambi. Guadagno confermato sul server a 32K. Log build/f4-pack-server.
+- **Prossimo passo**. Lavorare sulla decodifica dei pesi Trellis a quattro token. Confrontare l'ISA per gli hash a 32 bit e verificare separatamente il carico dei codici e l'estrazione degli stati. La conferma della temperatura è conclusa. Usare 0,8 per la chat breve nel profilo sperimentale F4. Per il prefill F5 resta aperta.
 - **Script di prova del server**: lo scratchpad di Claude non è condiviso. Per una prova equivalente avviare `build\bin\llama-server.exe` con gli argomenti dell'esempio in `NARIQ_VULKAN_PROGRESS.md` più `--spec-type draft-dflash --spec-draft-model D:\Progetti\openclaw\models\qwen38-27b-dflash2\Qwen3.8-27B-DFlash2-Q4_K_M.gguf --spec-draft-device Vulkan0 --spec-draft-ngl 99 --spec-draft-type-k q4_0 --spec-draft-type-v q4_0 --spec-draft-n-max 3 --spec-accept rejection -bs --spec-draft-vocab 65536`, `-c 32768 -ub 512`, e inviare a `/completion` un prompt di ~1500 token con `n_predict` 256; leggere `timings.predicted_per_second`, `draft_n`, `draft_n_accepted`.
 
 ## Regole di lavoro
@@ -177,7 +182,7 @@ Priorità: prima la generazione, poi il prefill. TurboQuant/Turbo3, contesti 128
 | F1 | Profilo C8 con tutte le opzioni attive: ciclo DFlash2 a 3 token a contesto breve e a 32K, prefill a 32K. Ripartizione fra Trellis 1 / 4 token, attenzione (percorsi FA del fork), delta-net, bozza e testa della bozza | fatto (Claude, 25/11) | Verifica a 4 token: prodotti Trellis ~91% del grafo; bozza ~11% del ciclo (metà nella testa Trellis). Attenzione e delta-net ~1% anche a 32K. Vedi registro |
 | F2 | Senza codice: `--spec-draft-n-max` 4-5 e `--spec-draft-p-min` con n-max 3 | fatto (Claude, 25/11), con F3 | A temperatura 1,0 nessuna configurazione batte n-max 3 senza p-min; vedi registro |
 | F3 | B5: verifica WMMA int8 estesa a 5-8 token | fatto (Claude, 25/11), opt-in con `GGML_VK_TRELLIS_VERIFY_CM=1` | `trellis_verify16_cm.comp` per 5-16 token: TRL3 5120 → 17408 a 16 token 425 → 175 µs. Utile con accettazione alta (greedy +17%), neutro a temperatura 1,0 |
-| F4 | In base al profilo: testa di uscita della bozza o decodifica a 1 token | da fare | |
+| F4 | Verifica a quattro token e costo della testa della bozza | INT32 su 32 input validato come candidato opt-in | Guadagno ripetuto a 32K sullo stesso prompt. La testa della bozza e la verifica su più prompt restano aperte. |
 | F5 | Prefill: scritture LDS a 32 bit per coppie FP16 con conversione "magic bias" (somma dei byte OR 0x6400 in FP16, una sottrazione impacchettata per due pesi), poi passo K a 4 tile | da fare | |
 
 ### Fase E: alternative
@@ -255,6 +260,410 @@ Il 26/11 l'email d'autore dei commit non ancora pubblicati è stata portata all'
 ## Registro delle prove
 
 Voci più recenti in alto. Formato: data, chi, commit o "non committato", cosa, numeri (riferimento → candidato), esito.
+
+- **26/11/2026, Codex**, F4 pack chat sintesi server. F4 attiva in entrambe le build, bozza 0,8. Confronto server A-B-B-A su stessi prompt e seed. breve 55.13 -> 59.18 t/s (+7.35%), ciclo stimato 53.86 -> 50.17 ms, token DFlash2 1014/1552 in entrambi. 32K 50.24 -> 53.49 t/s (+6.46%), ciclo stimato 56.20 -> 52.79 ms, token DFlash2 494/816 in entrambi. Guadagno confermato sul server a 32K. Log build/f4-pack-server.
+
+- **26/11/2026, Codex**, F4 pack chat tune-A-t0.8-2 server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.577 GiB. Log build/f4-pack-server/tune-A-t0.8-2.
+
+- **26/11/2026, Codex**, F4 pack chat tune-A-t0.8-2-long-42. Seed 42, prefill 32145 token, generazione 384 a 50.66 t/s, accettazione 60.5%, ciclo stimato 55.59 ms. VRAM prima della richiesta 1.218 GiB. Log build/f4-pack-server/tune-A-t0.8-2-long-42.json.
+
+- **26/11/2026, Codex**, F4 pack chat tune-A-t0.8-2-chat-173. Seed 173, prefill 4 token, generazione 384 a 52.70 t/s, accettazione 59.3%, ciclo stimato 52.79 ms. VRAM prima della richiesta 1.264 GiB. Log build/f4-pack-server/tune-A-t0.8-2-chat-173.json.
+
+- **26/11/2026, Codex**, F4 pack chat tune-A-t0.8-2-chat-42. Seed 42, prefill 153 token, generazione 384 a 59.98 t/s, accettazione 72.2%, ciclo stimato 52.77 ms. VRAM prima della richiesta 1.381 GiB. Log build/f4-pack-server/tune-A-t0.8-2-chat-42.json.
+
+- **26/11/2026, Codex**, F4 pack chat tune-B-t0.8-2 server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.582 GiB. Log build/f4-pack-server/tune-B-t0.8-2.
+
+- **26/11/2026, Codex**, F4 pack chat tune-B-t0.8-2-long-42. Seed 42, prefill 32145 token, generazione 384 a 53.29 t/s, accettazione 60.5%, ciclo stimato 52.84 ms. VRAM prima della richiesta 1.261 GiB. Log build/f4-pack-server/tune-B-t0.8-2-long-42.json.
+
+- **26/11/2026, Codex**, F4 pack chat tune-B-t0.8-2-chat-173. Seed 173, prefill 4 token, generazione 384 a 55.66 t/s, accettazione 59.3%, ciclo stimato 49.98 ms. VRAM prima della richiesta 1.264 GiB. Log build/f4-pack-server/tune-B-t0.8-2-chat-173.json.
+
+- **26/11/2026, Codex**, F4 pack chat tune-B-t0.8-2-chat-42. Seed 42, prefill 153 token, generazione 384 a 63.22 t/s, accettazione 72.2%, ciclo stimato 50.07 ms. VRAM prima della richiesta 1.381 GiB. Log build/f4-pack-server/tune-B-t0.8-2-chat-42.json.
+
+- **26/11/2026, Codex**, F4 pack chat tune-B-t0.8-1 server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.579 GiB. Log build/f4-pack-server/tune-B-t0.8-1.
+
+- **26/11/2026, Codex**, F4 pack chat tune-B-t0.8-1-long-42. Seed 42, prefill 32145 token, generazione 384 a 53.41 t/s, accettazione 60.5%, ciclo stimato 52.73 ms. VRAM prima della richiesta 1.267 GiB. Log build/f4-pack-server/tune-B-t0.8-1-long-42.json.
+
+- **26/11/2026, Codex**, F4 pack chat tune-B-t0.8-1-chat-173. Seed 173, prefill 4 token, generazione 384 a 55.67 t/s, accettazione 59.3%, ciclo stimato 49.98 ms. VRAM prima della richiesta 1.266 GiB. Log build/f4-pack-server/tune-B-t0.8-1-chat-173.json.
+
+- **26/11/2026, Codex**, F4 pack chat tune-B-t0.8-1-chat-42. Seed 42, prefill 153 token, generazione 384 a 62.43 t/s, accettazione 72.2%, ciclo stimato 50.70 ms. VRAM prima della richiesta 1.382 GiB. Log build/f4-pack-server/tune-B-t0.8-1-chat-42.json.
+
+- **26/11/2026, Codex**, F4 pack chat tune-A-t0.8-1 server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.575 GiB. Log build/f4-pack-server/tune-A-t0.8-1.
+
+- **26/11/2026, Codex**, F4 pack chat tune-A-t0.8-1-long-42. Seed 42, prefill 32145 token, generazione 384 a 49.57 t/s, accettazione 60.5%, ciclo stimato 56.81 ms. VRAM prima della richiesta 1.260 GiB. Log build/f4-pack-server/tune-A-t0.8-1-long-42.json.
+
+- **26/11/2026, Codex**, F4 pack chat tune-A-t0.8-1-chat-173. Seed 173, prefill 4 token, generazione 384 a 49.15 t/s, accettazione 59.3%, ciclo stimato 56.61 ms. VRAM prima della richiesta 1.264 GiB. Log build/f4-pack-server/tune-A-t0.8-1-chat-173.json.
+
+- **26/11/2026, Codex**, F4 pack chat tune-A-t0.8-1-chat-42. Seed 42, prefill 153 token, generazione 384 a 59.68 t/s, accettazione 72.2%, ciclo stimato 53.04 ms. VRAM prima della richiesta 1.380 GiB. Log build/f4-pack-server/tune-A-t0.8-1-chat-42.json.
+
+- **26/11/2026, Codex**, F4 conferma sintesi. Bozza 0,8 confermata per chat breve nei prompt provati. 52,66 -> 54,21 t/s, accettazione 58,6% -> 61,7%, 6/9 coppie a favore di 0,8. Diagnostico TRL3 a 4 token, con output sintetici. Up 130,99 us con il kernel esatto, 72,52 us con hash e packing sostituiti e 60,11 us saltando anche le letture dei codici. Down 148,55 -> 93,59 -> 70,69 us nelle stesse prove. Il proxy senza WMMA è più lento e cambia il modo in cui il driver carica e usa i frammenti. Questi confronti localizzano il costo della decodifica e non sono una scomposizione additiva. Pack esatto a coppie in F4. trl3 5120 → 17408 132,06 -> 123,88 us. trl3 17408 → 5120 149,44 -> 141,18 us. trl4 5120 → 17408 133,23 -> 125,22 us. trl4 17408 → 5120 156,08 -> 147,14 us. Vulkan 416/416 e CTest 4/4. Le 31 righe dei logits coincidono bit per bit con F4 prima della modifica. Log build/f4-confirm.
+
+- **26/11/2026, Codex**, F4 conferma perf-A-exact-2. Exit 0. VRAM libera 14.58 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11253 runs - 92.87 us/run - 32816 kB/run - [1;34m 336.99 GB/s[0m | TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 8120 runs - 131.90 us/run - 33080 kB/run - [1;34m 239.18 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 7105 runs - 149.30 us/run - 33082 kB/run - [1;34m 211.32 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 10752 runs - 93.32 us/run - 43696 kB/run - [1;34m 446.56 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7640 runs - 133.30 us/run - 43960 kB/run - [1;34m 314.51 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6876 runs - 155.28 us/run - 43962 kB/run - [1;34m 270.00 GB/s[0m. Log build/f4-confirm/perf-A-exact-2.log.
+
+- **26/11/2026, Codex**, F4 conferma perf-B-exact-2. Exit 0. VRAM libera 14.58 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11253 runs - 92.90 us/run - 32816 kB/run - [1;34m 336.87 GB/s[0m | TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 8120 runs - 123.62 us/run - 33080 kB/run - [1;34m 255.20 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 7105 runs - 141.78 us/run - 33082 kB/run - [1;34m 222.53 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 10752 runs - 93.45 us/run - 43696 kB/run - [1;34m 445.95 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 8404 runs - 125.43 us/run - 43960 kB/run - [1;34m 334.25 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6876 runs - 147.94 us/run - 43962 kB/run - [1;34m 283.39 GB/s[0m. Log build/f4-confirm/perf-B-exact-2.log.
+
+- **26/11/2026, Codex**, F4 conferma perf-B-exact-1. Exit 0. VRAM libera 14.576 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11253 runs - 92.50 us/run - 32816 kB/run - [1;34m 338.34 GB/s[0m | TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 8120 runs - 124.14 us/run - 33080 kB/run - [1;34m 254.14 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 8120 runs - 140.57 us/run - 33082 kB/run - [1;34m 224.44 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 10752 runs - 93.38 us/run - 43696 kB/run - [1;34m 446.29 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 8404 runs - 125.02 us/run - 43960 kB/run - [1;34m 335.33 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6876 runs - 146.35 us/run - 43962 kB/run - [1;34m 286.47 GB/s[0m. Log build/f4-confirm/perf-B-exact-1.log.
+
+- **26/11/2026, Codex**, F4 conferma perf-A-exact-1. Exit 0. VRAM libera 14.576 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11253 runs - 92.41 us/run - 32816 kB/run - [1;34m 338.68 GB/s[0m | TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 8120 runs - 132.22 us/run - 33080 kB/run - [1;34m 238.60 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 7105 runs - 149.57 us/run - 33082 kB/run - [1;34m 210.94 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 10752 runs - 94.43 us/run - 43696 kB/run - [1;34m 441.31 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7640 runs - 133.16 us/run - 43960 kB/run - [1;34m 314.83 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6876 runs - 156.88 us/run - 43962 kB/run - [1;34m 267.24 GB/s[0m. Log build/f4-confirm/perf-A-exact-1.log.
+
+- **26/11/2026, Codex**, F4 conferma hash logits pack esatto. Logits F4 identici bit per bit sul campione di 31 righe.
+
+- **26/11/2026, Codex**, F4 conferma logits-exact-pack. Top-1 31/31, KL max 0.000139429648072006, stessi token greedy True. Exit 0. Processi concorrenti assenti e 14.573 GiB stimati liberi. Log build/f4-confirm/logits-exact-pack.
+
+- **26/11/2026, Codex**, F4 conferma ctest-B-exact. Exit 0. VRAM libera 14.577 GiB. 100% tests passed, 0 tests failed out of 4. Log build/f4-confirm/ctest-B-exact.log.
+
+- **26/11/2026, Codex**, F4 conferma ops-B-exact. Exit 0. VRAM libera 14.577 GiB. 416/416 tests passed. Log build/f4-confirm/ops-B-exact.log.
+
+- **26/11/2026, Codex**, F4 conferma build pack esatto. Impacchettamento a coppie nel solo percorso F4. Exit 0. Log build/f4-confirm/build-exact.log.
+
+- **26/11/2026, Codex**, F4 conferma probe-0-r2. Exit 0. VRAM libera 14.582 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 8120 runs - 131.63 us/run - 33080 kB/run - [1;34m 239.68 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 7105 runs - 148.51 us/run - 33082 kB/run - [1;34m 212.44 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7640 runs - 133.22 us/run - 43960 kB/run - [1;34m 314.70 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6876 runs - 155.60 us/run - 43962 kB/run - [1;34m 269.45 GB/s[0m. Log build/f4-confirm/probe-0-r2.log.
+
+- **26/11/2026, Codex**, F4 conferma probe-1-r2. Exit 0. VRAM libera 14.582 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 14210 runs - 73.96 us/run - 33080 kB/run - [1;34m 426.57 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 11165 runs - 95.56 us/run - 33082 kB/run - [1;34m 330.17 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 12988 runs - 77.83 us/run - 43960 kB/run - [1;34m 538.64 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 11460 runs - 91.61 us/run - 43962 kB/run - [1;34m 457.64 GB/s[0m. Log build/f4-confirm/probe-1-r2.log.
+
+- **26/11/2026, Codex**, F4 conferma probe-2-r2. Exit 0. VRAM libera 14.576 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 6090 runs - 168.77 us/run - 33080 kB/run - [1;34m 186.93 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6090 runs - 190.91 us/run - 33082 kB/run - [1;34m 165.26 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 6112 runs - 169.23 us/run - 43960 kB/run - [1;34m 247.74 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 5348 runs - 198.29 us/run - 43962 kB/run - [1;34m 211.44 GB/s[0m. Log build/f4-confirm/probe-2-r2.log.
+
+- **26/11/2026, Codex**, F4 conferma probe-3-r2. Exit 0. VRAM libera 14.576 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 17255 runs - 59.78 us/run - 33080 kB/run - [1;34m 527.72 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 14210 runs - 70.88 us/run - 33082 kB/run - [1;34m 445.12 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 17572 runs - 58.35 us/run - 43960 kB/run - [1;34m 718.51 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 15280 runs - 68.33 us/run - 43962 kB/run - [1;34m 613.58 GB/s[0m. Log build/f4-confirm/probe-3-r2.log.
+
+- **26/11/2026, Codex**, F4 conferma probe-4-r2. Exit 0. VRAM libera 14.58 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 8120 runs - 128.37 us/run - 33080 kB/run - [1;34m 245.76 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 7105 runs - 146.43 us/run - 33082 kB/run - [1;34m 215.46 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 8404 runs - 124.98 us/run - 43960 kB/run - [1;34m 335.44 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6876 runs - 147.00 us/run - 43962 kB/run - [1;34m 285.21 GB/s[0m. Log build/f4-confirm/probe-4-r2.log.
+
+- **26/11/2026, Codex**, F4 conferma probe-4-r1. Exit 0. VRAM libera 14.582 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 8120 runs - 127.42 us/run - 33080 kB/run - [1;34m 247.59 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 7105 runs - 147.29 us/run - 33082 kB/run - [1;34m 214.19 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7640 runs - 131.20 us/run - 43960 kB/run - [1;34m 319.54 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6876 runs - 156.09 us/run - 43962 kB/run - [1;34m 268.60 GB/s[0m. Log build/f4-confirm/probe-4-r1.log.
+
+- **26/11/2026, Codex**, F4 conferma probe-3-r1. Exit 0. VRAM libera 14.576 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 17255 runs - 60.43 us/run - 33080 kB/run - [1;34m 522.08 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 14210 runs - 70.49 us/run - 33082 kB/run - [1;34m 447.55 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 17572 runs - 57.61 us/run - 43960 kB/run - [1;34m 727.71 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 14516 runs - 69.65 us/run - 43962 kB/run - [1;34m 601.92 GB/s[0m. Log build/f4-confirm/probe-3-r1.log.
+
+- **26/11/2026, Codex**, F4 conferma probe-2-r1. Exit 0. VRAM libera 14.58 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7105 runs - 161.36 us/run - 33080 kB/run - [1;34m 195.52 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6090 runs - 182.55 us/run - 33082 kB/run - [1;34m 172.83 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 6876 runs - 161.08 us/run - 43960 kB/run - [1;34m 260.26 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 5348 runs - 188.33 us/run - 43962 kB/run - [1;34m 222.61 GB/s[0m. Log build/f4-confirm/probe-2-r1.log.
+
+- **26/11/2026, Codex**, F4 conferma probe-1-r1. Exit 0. VRAM libera 14.58 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 14210 runs - 71.08 us/run - 33080 kB/run - [1;34m 443.85 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 11165 runs - 91.61 us/run - 33082 kB/run - [1;34m 344.40 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 12988 runs - 77.78 us/run - 43960 kB/run - [1;34m 539.01 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 11460 runs - 92.19 us/run - 43962 kB/run - [1;34m 454.77 GB/s[0m. Log build/f4-confirm/probe-1-r1.log.
+
+- **26/11/2026, Codex**, F4 conferma probe-0-r1. Exit 0. VRAM libera 14.576 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 8120 runs - 130.34 us/run - 33080 kB/run - [1;34m 242.04 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 7105 runs - 148.59 us/run - 33082 kB/run - [1;34m 212.33 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7640 runs - 133.47 us/run - 43960 kB/run - [1;34m 314.10 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6876 runs - 155.89 us/run - 43962 kB/run - [1;34m 268.94 GB/s[0m. Log build/f4-confirm/probe-0-r1.log.
+
+- **26/11/2026, Codex**, F4 conferma probe-4-ops. Exit 0. VRAM libera 14.574 GiB. 416/416 tests passed. Log build/f4-confirm/probe-4-ops.log.
+
+- **26/11/2026, Codex**, F4 conferma probe-0-ops. Exit 0. VRAM libera 14.572 GiB. 416/416 tests passed. Log build/f4-confirm/probe-0-ops.log.
+
+- **26/11/2026, Codex**, F4 conferma build diagnostica. Exit 0. Sorgenti temporanei e DLL ripristinati. Binario diagnostico isolato, solo test-backend-ops. Log build/f4-confirm/build-probe.log.
+
+- **26/11/2026, Codex**, F4 conferma SPIR-V diagnostico. Compilazione e validazione di cinque modi diagnostici. Exit 0.
+
+- **26/11/2026, Codex**, F4 conferma sintesi temperatura. F4, bozza 1,0 -> 0,8, target 1,0. Cinque prompt e tre seed nuovi. chat_totale 52.66 -> 54.21 t/s e 58.6 -> 61.7% accettazione, 6/9 coppie vinte. code 56.91 -> 58.01 t/s e 66.9 -> 68.7% accettazione, 2/3 coppie vinte. long 52.89 -> 52.68 t/s e 67.1 -> 64.4% accettazione, 1/3 coppie vinte.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t0.8 server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.586 GiB. Log build/f4-confirm/tune-B-t0.8.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t0.8-long-911. Seed 911, prefill 4 token, generazione 192 a 51.35 t/s, accettazione 63.1%, ciclo stimato 56.36 ms. VRAM prima della richiesta 1.110 GiB. Log build/f4-confirm/tune-B-t0.8-long-911.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t0.8-long-173. Seed 173, prefill 4 token, generazione 192 a 49.26 t/s, accettazione 57.6%, ciclo stimato 55.39 ms. VRAM prima della richiesta 1.110 GiB. Log build/f4-confirm/tune-B-t0.8-long-173.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t0.8-long-57. Seed 57, prefill 32174 token, generazione 192 a 57.23 t/s, accettazione 74.0%, ciclo stimato 56.57 ms. VRAM prima della richiesta 1.272 GiB. Log build/f4-confirm/tune-B-t0.8-long-57.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t0.8-code-911. Seed 911, prefill 4 token, generazione 192 a 56.85 t/s, accettazione 67.2%, ciclo stimato 52.50 ms. VRAM prima della richiesta 1.265 GiB. Log build/f4-confirm/tune-B-t0.8-code-911.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t0.8-code-173. Seed 173, prefill 4 token, generazione 192 a 60.59 t/s, accettazione 73.3%, ciclo stimato 52.54 ms. VRAM prima della richiesta 1.266 GiB. Log build/f4-confirm/tune-B-t0.8-code-173.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t0.8-code-57. Seed 57, prefill 107 token, generazione 192 a 55.90 t/s, accettazione 65.8%, ciclo stimato 53.11 ms. VRAM prima della richiesta 1.266 GiB. Log build/f4-confirm/tune-B-t0.8-code-57.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t0.8-editor-911. Seed 911, prefill 4 token, generazione 192 a 54.18 t/s, accettazione 62.7%, ciclo stimato 52.61 ms. VRAM prima della richiesta 1.234 GiB. Log build/f4-confirm/tune-B-t0.8-editor-911.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t0.8-editor-173. Seed 173, prefill 4 token, generazione 192 a 53.38 t/s, accettazione 60.3%, ciclo stimato 52.62 ms. VRAM prima della richiesta 1.273 GiB. Log build/f4-confirm/tune-B-t0.8-editor-173.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t0.8-editor-57. Seed 57, prefill 107 token, generazione 192 a 51.94 t/s, accettazione 58.9%, ciclo stimato 52.78 ms. VRAM prima della richiesta 1.269 GiB. Log build/f4-confirm/tune-B-t0.8-editor-57.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t0.8-decision-911. Seed 911, prefill 4 token, generazione 192 a 59.63 t/s, accettazione 71.0%, ciclo stimato 52.51 ms. VRAM prima della richiesta 1.269 GiB. Log build/f4-confirm/tune-B-t0.8-decision-911.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t0.8-decision-173. Seed 173, prefill 4 token, generazione 192 a 51.30 t/s, accettazione 56.3%, ciclo stimato 52.44 ms. VRAM prima della richiesta 1.274 GiB. Log build/f4-confirm/tune-B-t0.8-decision-173.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t0.8-decision-57. Seed 57, prefill 95 token, generazione 192 a 55.88 t/s, accettazione 65.5%, ciclo stimato 52.85 ms. VRAM prima della richiesta 1.278 GiB. Log build/f4-confirm/tune-B-t0.8-decision-57.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t0.8-support-911. Seed 911, prefill 4 token, generazione 192 a 55.07 t/s, accettazione 63.1%, ciclo stimato 52.55 ms. VRAM prima della richiesta 1.278 GiB. Log build/f4-confirm/tune-B-t0.8-support-911.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t0.8-support-173. Seed 173, prefill 4 token, generazione 192 a 54.33 t/s, accettazione 62.2%, ciclo stimato 52.47 ms. VRAM prima della richiesta 1.284 GiB. Log build/f4-confirm/tune-B-t0.8-support-173.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t0.8-support-57. Seed 57, prefill 95 token, generazione 192 a 50.68 t/s, accettazione 56.8%, ciclo stimato 53.09 ms. VRAM prima della richiesta 1.387 GiB. Log build/f4-confirm/tune-B-t0.8-support-57.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t1.0 server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.58 GiB. Log build/f4-confirm/tune-B-t1.0.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t1.0-long-911. Seed 911, prefill 4 token, generazione 192 a 56.87 t/s, accettazione 75.1%, ciclo stimato 56.92 ms. VRAM prima della richiesta 1.107 GiB. Log build/f4-confirm/tune-B-t1.0-long-911.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t1.0-long-173. Seed 173, prefill 4 token, generazione 192 a 50.17 t/s, accettazione 61.7%, ciclo stimato 56.82 ms. VRAM prima della richiesta 1.111 GiB. Log build/f4-confirm/tune-B-t1.0-long-173.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t1.0-long-57. Seed 57, prefill 32174 token, generazione 192 a 51.27 t/s, accettazione 65.3%, ciclo stimato 57.90 ms. VRAM prima della richiesta 1.267 GiB. Log build/f4-confirm/tune-B-t1.0-long-57.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t1.0-code-911. Seed 911, prefill 4 token, generazione 192 a 58.80 t/s, accettazione 70.4%, ciclo stimato 52.39 ms. VRAM prima della richiesta 1.267 GiB. Log build/f4-confirm/tune-B-t1.0-code-911.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t1.0-code-173. Seed 173, prefill 4 token, generazione 192 a 57.76 t/s, accettazione 69.1%, ciclo stimato 52.77 ms. VRAM prima della richiesta 1.267 GiB. Log build/f4-confirm/tune-B-t1.0-code-173.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t1.0-code-57. Seed 57, prefill 107 token, generazione 192 a 53.57 t/s, accettazione 61.6%, ciclo stimato 52.69 ms. VRAM prima della richiesta 1.271 GiB. Log build/f4-confirm/tune-B-t1.0-code-57.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t1.0-editor-911. Seed 911, prefill 4 token, generazione 192 a 52.15 t/s, accettazione 57.6%, ciclo stimato 52.32 ms. VRAM prima della richiesta 1.267 GiB. Log build/f4-confirm/tune-B-t1.0-editor-911.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t1.0-editor-173. Seed 173, prefill 4 token, generazione 192 a 52.11 t/s, accettazione 57.6%, ciclo stimato 52.36 ms. VRAM prima della richiesta 1.267 GiB. Log build/f4-confirm/tune-B-t1.0-editor-173.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t1.0-editor-57. Seed 57, prefill 107 token, generazione 192 a 49.93 t/s, accettazione 54.4%, ciclo stimato 52.88 ms. VRAM prima della richiesta 1.269 GiB. Log build/f4-confirm/tune-B-t1.0-editor-57.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t1.0-decision-911. Seed 911, prefill 4 token, generazione 192 a 50.02 t/s, accettazione 54.3%, ciclo stimato 52.31 ms. VRAM prima della richiesta 1.278 GiB. Log build/f4-confirm/tune-B-t1.0-decision-911.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t1.0-decision-173. Seed 173, prefill 4 token, generazione 192 a 51.42 t/s, accettazione 56.8%, ciclo stimato 52.32 ms. VRAM prima della richiesta 1.269 GiB. Log build/f4-confirm/tune-B-t1.0-decision-173.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t1.0-decision-57. Seed 57, prefill 95 token, generazione 192 a 58.61 t/s, accettazione 70.3%, ciclo stimato 52.84 ms. VRAM prima della richiesta 1.275 GiB. Log build/f4-confirm/tune-B-t1.0-decision-57.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t1.0-support-911. Seed 911, prefill 4 token, generazione 192 a 51.41 t/s, accettazione 56.3%, ciclo stimato 52.32 ms. VRAM prima della richiesta 1.273 GiB. Log build/f4-confirm/tune-B-t1.0-support-911.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t1.0-support-173. Seed 173, prefill 4 token, generazione 192 a 52.72 t/s, accettazione 59.5%, ciclo stimato 53.02 ms. VRAM prima della richiesta 1.253 GiB. Log build/f4-confirm/tune-B-t1.0-support-173.json.
+
+- **26/11/2026, Codex**, F4 conferma tune-B-t1.0-support-57. Seed 57, prefill 95 token, generazione 192 a 54.10 t/s, accettazione 62.8%, ciclo stimato 53.23 ms. VRAM prima della richiesta 1.384 GiB. Log build/f4-confirm/tune-B-t1.0-support-57.json.
+
+- **26/11/2026, Codex**, F4 accettazione sintesi accettazione e costo. Sui prefissi fissi, overlap A/B 0,437/0,441, 0,545/0,544, 0,306/0,300 per posizione (10/8/8 coppie). Con F4, bozza 0,8 rispetto a 1,0 porta la chat da 55,17 a 60,03 t/s, codice da 55,28 a 54,43 e 32K da 52,92 a 53,25. Le impostazioni di avvio restano quelle del riferimento. Nel profilo GPU seriale, mediana dei grafi di verifica 55,66 -> 51,58 ms. Le operazioni Trellis a quattro token pesano 47,72 ms con F4, con 18,06 ms per up e 10,39 ms per down. Le bande della testa della bozza pesano 2,00 ms. I tempi del profilo includono l'overhead delle misure. Il prototipo che riusa la scala ed elimina una barriera è scartato dopo il microbenchmark. Log build/f4-accept.
+
+- **26/11/2026, Codex**, F4 accettazione riuso scala e barriera scartati. Risultato A-B-B-A, medie in microsecondi. trl3 5120->17408 136,95 -> 143,77. trl3 17408->5120 156,45 -> 164,50. trl4 5120->17408 138,39 -> 141,47. trl4 17408->5120 159,67 -> 168,33. Vulkan 416/416. Variante archiviata in build/f4-accept/scale-reuse.patch. Ripristinati lo shader e la DLL F4 precedente, copia verificata con SHA-256.
+
+- **26/11/2026, Codex**, F4 accettazione perf-A-reuse-2. Exit 0. VRAM libera 14.569 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11253 runs - 96.32 us/run - 32816 kB/run - [1;34m 324.94 GB/s[0m | TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 8120 runs - 137.30 us/run - 33080 kB/run - [1;34m 229.78 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 7105 runs - 156.39 us/run - 33082 kB/run - [1;34m 201.74 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 10752 runs - 96.64 us/run - 43696 kB/run - [1;34m 431.21 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7640 runs - 137.12 us/run - 43960 kB/run - [1;34m 305.75 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6876 runs - 155.48 us/run - 43962 kB/run - [1;34m 269.65 GB/s[0m. Log build/f4-accept/perf-A-reuse-2.log.
+
+- **26/11/2026, Codex**, F4 accettazione perf-B-reuse-2. Exit 0. VRAM libera 14.569 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11253 runs - 92.07 us/run - 32816 kB/run - [1;34m 339.92 GB/s[0m | TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7105 runs - 143.01 us/run - 33080 kB/run - [1;34m 220.59 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6090 runs - 169.00 us/run - 33082 kB/run - [1;34m 186.68 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 10752 runs - 96.53 us/run - 43696 kB/run - [1;34m 431.72 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7640 runs - 144.28 us/run - 43960 kB/run - [1;34m 290.57 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6112 runs - 171.89 us/run - 43962 kB/run - [1;34m 243.91 GB/s[0m. Log build/f4-accept/perf-B-reuse-2.log.
+
+- **26/11/2026, Codex**, F4 accettazione perf-B-reuse-1. Exit 0. VRAM libera 14.57 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 10230 runs - 98.05 us/run - 32816 kB/run - [1;34m 319.18 GB/s[0m | TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7105 runs - 144.54 us/run - 33080 kB/run - [1;34m 218.27 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 7105 runs - 159.99 us/run - 33082 kB/run - [1;34m 197.19 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 10752 runs - 93.74 us/run - 43696 kB/run - [1;34m 444.53 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7640 runs - 138.65 us/run - 43960 kB/run - [1;34m 302.38 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6112 runs - 164.77 us/run - 43962 kB/run - [1;34m 254.45 GB/s[0m. Log build/f4-accept/perf-B-reuse-1.log.
+
+- **26/11/2026, Codex**, F4 accettazione perf-A-reuse-1. Exit 0. VRAM libera 14.575 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11253 runs - 96.23 us/run - 32816 kB/run - [1;34m 325.23 GB/s[0m | TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 8120 runs - 136.60 us/run - 33080 kB/run - [1;34m 230.95 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 7105 runs - 156.51 us/run - 33082 kB/run - [1;34m 201.59 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 10752 runs - 96.80 us/run - 43696 kB/run - [1;34m 430.50 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7640 runs - 139.67 us/run - 43960 kB/run - [1;34m 300.18 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6112 runs - 163.86 us/run - 43962 kB/run - [1;34m 255.86 GB/s[0m. Log build/f4-accept/perf-A-reuse-1.log.
+
+- **26/11/2026, Codex**, F4 accettazione ops-B-reuse. Exit 0. VRAM libera 14.561 GiB. 416/416 tests passed. Log build/f4-accept/ops-B-reuse.log.
+
+- **26/11/2026, Codex**, F4 accettazione build riuso scala. Build Windows exit 0. Log build/f4-accept/build-cost.log.
+
+- **26/11/2026, Codex**, F4 accettazione riuso scala SPIR-V. Scala scritta una volta per coppia di tile e una barriera in meno. Compilazione e validazione SPIR-V exit 0.
+
+- **26/11/2026, Codex**, F4 accettazione profilo costo. Grafo GPU di verifica (mediane 21 e 21 grafi) 55.66 -> 51.58 ms. Trellis a 4 token 51.93 -> 47.72 ms. MLP up 19.53 -> 18.06 ms e down 12.20 -> 10.39 ms. bande della testa bozza 2.47 -> 2.00 ms. Profilazione seriale con overhead. Log build/f4-accept/cost-*.log.
+
+- **26/11/2026, Codex**, F4 accettazione cost-B-t1.0 server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.54 GiB. Log build/f4-accept/cost-B-t1.0.
+
+- **26/11/2026, Codex**, F4 accettazione cost-B-t1.0-chat-42. Seed 42, prefill 153 token, generazione 64 a 43.04 t/s, accettazione 73.3%, ciclo stimato 73.19 ms. VRAM prima della richiesta 1.380 GiB. Log build/f4-accept/cost-B-t1.0-chat-42.json.
+
+- **26/11/2026, Codex**, F4 accettazione cost-A-t1.0 server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.581 GiB. Log build/f4-accept/cost-A-t1.0.
+
+- **26/11/2026, Codex**, F4 accettazione cost-A-t1.0-chat-42. Seed 42, prefill 153 token, generazione 64 a 40.44 t/s, accettazione 73.3%, ciclo stimato 77.89 ms. VRAM prima della richiesta 1.388 GiB. Log build/f4-accept/cost-A-t1.0-chat-42.json.
+
+- **26/11/2026, Codex**, F4 accettazione temperatura B 1.2. Chat, codice, 32K (3 seed per prompt). chat 56.27 t/s, accettazione 65.3%, ciclo stimato 52.76 ms. code 55.26 t/s, accettazione 63.2%, ciclo stimato 52.74 ms. long 51.67 t/s, accettazione 65.1%, ciclo stimato 57.46 ms.
+
+- **26/11/2026, Codex**, F4 accettazione temperatura B 1.0. Chat, codice, 32K (3 seed per prompt). chat 55.17 t/s, accettazione 63.6%, ciclo stimato 52.82 ms. code 55.28 t/s, accettazione 64.1%, ciclo stimato 52.98 ms. long 52.92 t/s, accettazione 64.8%, ciclo stimato 55.73 ms.
+
+- **26/11/2026, Codex**, F4 accettazione temperatura B 0.8. Chat, codice, 32K (3 seed per prompt). chat 60.03 t/s, accettazione 72.9%, ciclo stimato 52.72 ms. code 54.43 t/s, accettazione 62.2%, ciclo stimato 52.82 ms. long 53.25 t/s, accettazione 67.4%, ciclo stimato 56.84 ms.
+
+- **26/11/2026, Codex**, F4 accettazione temperatura A 1.0. Chat, codice, 32K (3 seed per prompt). chat 51.38 t/s, accettazione 66.5%, ciclo stimato 58.39 ms. code 52.03 t/s, accettazione 67.4%, ciclo stimato 58.27 ms. long 46.88 t/s, accettazione 64.2%, ciclo stimato 62.47 ms.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.2 server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.577 GiB. Log build/f4-accept/tune-B-t1.2.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.2-long-777. Seed 777, prefill 4 token, generazione 192 a 51.61 t/s, accettazione 64.6%, ciclo stimato 56.93 ms. VRAM prima della richiesta 1.107 GiB. Log build/f4-accept/tune-B-t1.2-long-777.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.2-long-123. Seed 123, prefill 4 token, generazione 192 a 51.25 t/s, accettazione 66.1%, ciclo stimato 58.23 ms. VRAM prima della richiesta 1.108 GiB. Log build/f4-accept/tune-B-t1.2-long-123.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.2-long-42. Seed 42, prefill 32145 token, generazione 192 a 51.33 t/s, accettazione 64.6%, ciclo stimato 57.24 ms. VRAM prima della richiesta 1.263 GiB. Log build/f4-accept/tune-B-t1.2-long-42.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.2-code-777. Seed 777, prefill 4 token, generazione 192 a 57.61 t/s, accettazione 67.7%, ciclo stimato 52.62 ms. VRAM prima della richiesta 1.263 GiB. Log build/f4-accept/tune-B-t1.2-code-777.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.2-code-123. Seed 123, prefill 4 token, generazione 192 a 53.25 t/s, accettazione 60.6%, ciclo stimato 53.00 ms. VRAM prima della richiesta 1.266 GiB. Log build/f4-accept/tune-B-t1.2-code-123.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.2-code-42. Seed 42, prefill 99 token, generazione 192 a 54.23 t/s, accettazione 61.7%, ciclo stimato 52.57 ms. VRAM prima della richiesta 1.256 GiB. Log build/f4-accept/tune-B-t1.2-code-42.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.2-chat-777. Seed 777, prefill 4 token, generazione 192 a 54.15 t/s, accettazione 61.7%, ciclo stimato 52.65 ms. VRAM prima della richiesta 1.265 GiB. Log build/f4-accept/tune-B-t1.2-chat-777.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.2-chat-123. Seed 123, prefill 4 token, generazione 192 a 54.94 t/s, accettazione 63.6%, ciclo stimato 52.68 ms. VRAM prima della richiesta 1.271 GiB. Log build/f4-accept/tune-B-t1.2-chat-123.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.2-chat-42. Seed 42, prefill 153 token, generazione 192 a 59.10 t/s, accettazione 71.0%, ciclo stimato 52.98 ms. VRAM prima della richiesta 1.380 GiB. Log build/f4-accept/tune-B-t1.2-chat-42.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.0 server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.578 GiB. Log build/f4-accept/tune-B-t1.0.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.0-long-777. Seed 777, prefill 4 token, generazione 192 a 50.62 t/s, accettazione 60.6%, ciclo stimato 55.76 ms. VRAM prima della richiesta 1.112 GiB. Log build/f4-accept/tune-B-t1.0-long-777.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.0-long-123. Seed 123, prefill 4 token, generazione 192 a 54.58 t/s, accettazione 68.6%, ciclo stimato 55.84 ms. VRAM prima della richiesta 1.112 GiB. Log build/f4-accept/tune-B-t1.0-long-123.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.0-long-42. Seed 42, prefill 32145 token, generazione 192 a 52.87 t/s, accettazione 65.6%, ciclo stimato 55.58 ms. VRAM prima della richiesta 1.264 GiB. Log build/f4-accept/tune-B-t1.0-long-42.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.0-code-777. Seed 777, prefill 4 token, generazione 192 a 52.55 t/s, accettazione 60.0%, ciclo stimato 53.19 ms. VRAM prima della richiesta 1.259 GiB. Log build/f4-accept/tune-B-t1.0-code-777.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.0-code-123. Seed 123, prefill 4 token, generazione 192 a 54.97 t/s, accettazione 64.3%, ciclo stimato 53.18 ms. VRAM prima della richiesta 1.259 GiB. Log build/f4-accept/tune-B-t1.0-code-123.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.0-code-42. Seed 42, prefill 99 token, generazione 192 a 57.70 t/s, accettazione 68.3%, ciclo stimato 52.55 ms. VRAM prima della richiesta 1.265 GiB. Log build/f4-accept/tune-B-t1.0-code-42.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.0-chat-777. Seed 777, prefill 4 token, generazione 192 a 51.07 t/s, accettazione 57.1%, ciclo stimato 52.92 ms. VRAM prima della richiesta 1.261 GiB. Log build/f4-accept/tune-B-t1.0-chat-777.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.0-chat-123. Seed 123, prefill 4 token, generazione 192 a 58.50 t/s, accettazione 69.9%, ciclo stimato 52.66 ms. VRAM prima della richiesta 1.267 GiB. Log build/f4-accept/tune-B-t1.0-chat-123.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t1.0-chat-42. Seed 42, prefill 153 token, generazione 192 a 55.60 t/s, accettazione 64.6%, ciclo stimato 52.85 ms. VRAM prima della richiesta 1.385 GiB. Log build/f4-accept/tune-B-t1.0-chat-42.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t0.8 server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.582 GiB. Log build/f4-accept/tune-B-t0.8.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t0.8-long-777. Seed 777, prefill 4 token, generazione 192 a 50.25 t/s, accettazione 61.1%, ciclo stimato 56.17 ms. VRAM prima della richiesta 1.108 GiB. Log build/f4-accept/tune-B-t0.8-long-777.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t0.8-long-123. Seed 123, prefill 4 token, generazione 192 a 56.71 t/s, accettazione 76.1%, ciclo stimato 57.41 ms. VRAM prima della richiesta 1.108 GiB. Log build/f4-accept/tune-B-t0.8-long-123.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t0.8-long-42. Seed 42, prefill 32145 token, generazione 192 a 52.35 t/s, accettazione 66.1%, ciclo stimato 57.01 ms. VRAM prima della richiesta 1.259 GiB. Log build/f4-accept/tune-B-t0.8-long-42.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t0.8-code-777. Seed 777, prefill 4 token, generazione 192 a 51.06 t/s, accettazione 57.1%, ciclo stimato 52.94 ms. VRAM prima della richiesta 1.255 GiB. Log build/f4-accept/tune-B-t0.8-code-777.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t0.8-code-123. Seed 123, prefill 4 token, generazione 192 a 52.57 t/s, accettazione 59.7%, ciclo stimato 52.91 ms. VRAM prima della richiesta 1.264 GiB. Log build/f4-accept/tune-B-t0.8-code-123.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t0.8-code-42. Seed 42, prefill 99 token, generazione 192 a 59.52 t/s, accettazione 71.0%, ciclo stimato 52.60 ms. VRAM prima della richiesta 1.261 GiB. Log build/f4-accept/tune-B-t0.8-code-42.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t0.8-chat-777. Seed 777, prefill 4 token, generazione 192 a 57.65 t/s, accettazione 69.3%, ciclo stimato 52.59 ms. VRAM prima della richiesta 1.261 GiB. Log build/f4-accept/tune-B-t0.8-chat-777.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t0.8-chat-123. Seed 123, prefill 4 token, generazione 192 a 59.48 t/s, accettazione 72.7%, ciclo stimato 52.64 ms. VRAM prima della richiesta 1.272 GiB. Log build/f4-accept/tune-B-t0.8-chat-123.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-B-t0.8-chat-42. Seed 42, prefill 153 token, generazione 192 a 62.20 t/s, accettazione 77.0%, ciclo stimato 52.94 ms. VRAM prima della richiesta 1.380 GiB. Log build/f4-accept/tune-B-t0.8-chat-42.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-A-t1.0 server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.576 GiB. Log build/f4-accept/tune-A-t1.0.
+
+- **26/11/2026, Codex**, F4 accettazione tune-A-t1.0-long-777. Seed 777, prefill 4 token, generazione 192 a 45.86 t/s, accettazione 60.6%, ciclo stimato 61.55 ms. VRAM prima della richiesta 1.112 GiB. Log build/f4-accept/tune-A-t1.0-long-777.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-A-t1.0-long-123. Seed 123, prefill 4 token, generazione 192 a 49.32 t/s, accettazione 71.0%, ciclo stimato 62.47 ms. VRAM prima della richiesta 1.112 GiB. Log build/f4-accept/tune-A-t1.0-long-123.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-A-t1.0-long-42. Seed 42, prefill 32145 token, generazione 192 a 44.95 t/s, accettazione 61.7%, ciclo stimato 63.41 ms. VRAM prima della richiesta 1.257 GiB. Log build/f4-accept/tune-A-t1.0-long-42.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-A-t1.0-code-777. Seed 777, prefill 4 token, generazione 192 a 49.66 t/s, accettazione 63.6%, ciclo stimato 58.27 ms. VRAM prima della richiesta 1.262 GiB. Log build/f4-accept/tune-A-t1.0-code-777.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-A-t1.0-code-123. Seed 123, prefill 4 token, generazione 192 a 54.66 t/s, accettazione 72.8%, ciclo stimato 58.24 ms. VRAM prima della richiesta 1.262 GiB. Log build/f4-accept/tune-A-t1.0-code-123.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-A-t1.0-code-42. Seed 42, prefill 99 token, generazione 192 a 51.20 t/s, accettazione 66.1%, ciclo stimato 58.29 ms. VRAM prima della richiesta 1.265 GiB. Log build/f4-accept/tune-A-t1.0-code-42.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-A-t1.0-chat-777. Seed 777, prefill 4 token, generazione 192 a 47.50 t/s, accettazione 59.4%, ciclo stimato 58.28 ms. VRAM prima della richiesta 1.259 GiB. Log build/f4-accept/tune-A-t1.0-chat-777.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-A-t1.0-chat-123. Seed 123, prefill 4 token, generazione 192 a 54.60 t/s, accettazione 72.8%, ciclo stimato 58.30 ms. VRAM prima della richiesta 1.270 GiB. Log build/f4-accept/tune-A-t1.0-chat-123.json.
+
+- **26/11/2026, Codex**, F4 accettazione tune-A-t1.0-chat-42. Seed 42, prefill 153 token, generazione 192 a 51.73 t/s, accettazione 68.3%, ciclo stimato 58.60 ms. VRAM prima della richiesta 1.379 GiB. Log build/f4-accept/tune-A-t1.0-chat-42.json.
+
+- **26/11/2026, Codex**, F4 accettazione diagnosi prefissi. Primo ciclo, ancora e prefisso della proposta identici nelle coppie. posizione 1 (10 coppie), overlap A/B 0.4372/0.4405, TV target 0.0078, TV bozza 0.0313; posizione 2 (8 coppie), overlap A/B 0.5445/0.5436, TV target 0.0110, TV bozza 0.0167; posizione 3 (8 coppie), overlap A/B 0.3060/0.3000, TV target 0.0185, TV bozza 0.0375. Log build/f4-accept/fixed-comparison.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-B-t1.0 server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.574 GiB. Log build/f4-accept/fixed-B-t1.0.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-B-t1.0-long-0-1. Prefisso fisso, ancora 6054, proposte [28527, 2920, 501], sovrapposizione p/q [0.3565460142, 0.691888306, 0.56168348]. VRAM prima della richiesta 1.113 GiB. Log build/f4-accept/fixed-B-t1.0-long-0-1.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-B-t1.0-long-0-0. Prefisso fisso, ancora 16, proposte [13, 2972, 49], sovrapposizione p/q [0.9483143399999999, 0.301308917, 0.286045211]. VRAM prima della richiesta 1.264 GiB. Log build/f4-accept/fixed-B-t1.0-long-0-0.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-B-t1.0-code-0-3. Prefisso fisso, ancora 4931, proposte [2920, 3413, 450], sovrapposizione p/q [0.03923937, 0.01889149, 0]. VRAM prima della richiesta 1.259 GiB. Log build/f4-accept/fixed-B-t1.0-code-0-3.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-B-t1.0-code-0-2. Prefisso fisso, ancora 3687, proposte [1433, 25, 271], sovrapposizione p/q [0.5654554580000001, 0.44578983, 0.390712666]. VRAM prima della richiesta 1.264 GiB. Log build/f4-accept/fixed-B-t1.0-code-0-2.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-B-t1.0-code-0-1. Prefisso fisso, ancora 177198, proposte [11, 585, 500], sovrapposizione p/q [0.6495292300000001, 0.04249488, 0.234934]. VRAM prima della richiesta 1.259 GiB. Log build/f4-accept/fixed-B-t1.0-code-0-1.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-B-t1.0-code-0-0. Prefisso fisso, ancora 464, proposte [2857, 271, 727], sovrapposizione p/q [0.9759696, 0.5924392310000001, 0.645082665]. VRAM prima della richiesta 1.262 GiB. Log build/f4-accept/fixed-B-t1.0-code-0-0.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-B-t1.0-chat-0-3. Prefisso fisso, ancora 4931, proposte [1542, 384, 378], sovrapposizione p/q [0.45675306, 0.22820281199999998, 0.05848543]. VRAM prima della richiesta 1.268 GiB. Log build/f4-accept/fixed-B-t1.0-chat-0-3.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-B-t1.0-chat-0-2. Prefisso fisso, ancora 3687, proposte [829, 7320, 13], sovrapposizione p/q [0.41331399, 0.9969922, 0.646086294]. VRAM prima della richiesta 1.266 GiB. Log build/f4-accept/fixed-B-t1.0-chat-0-2.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-B-t1.0-chat-0-1. Prefisso fisso, ancora 271, proposte [17, 13, 2025], sovrapposizione p/q [0, 0.9999872, 0.02597712]. VRAM prima della richiesta 1.289 GiB. Log build/f4-accept/fixed-B-t1.0-chat-0-1.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-B-t1.0-chat-0-0. Prefisso fisso, ancora 271, proposte [16, 13, 198], sovrapposizione p/q [0, 0.70491896, 0]. VRAM prima della richiesta 1.381 GiB. Log build/f4-accept/fixed-B-t1.0-chat-0-0.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-A-t1.0 server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.575 GiB. Log build/f4-accept/fixed-A-t1.0.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-A-t1.0-long-0-1. Prefisso fisso, ancora 6054, proposte [28527, 2920, 501], sovrapposizione p/q [0.3722746503, 0.6981725409999999, 0.60270732]. VRAM prima della richiesta 1.113 GiB. Log build/f4-accept/fixed-A-t1.0-long-0-1.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-A-t1.0-long-0-0. Prefisso fisso, ancora 16, proposte [13, 2972, 49], sovrapposizione p/q [0.95077162, 0.30799988300000003, 0.28829199]. VRAM prima della richiesta 1.259 GiB. Log build/f4-accept/fixed-A-t1.0-long-0-0.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-A-t1.0-code-0-3. Prefisso fisso, ancora 4931, proposte [2920, 3413, 450], sovrapposizione p/q [0.06415065, 0.02215113, 0]. VRAM prima della richiesta 1.259 GiB. Log build/f4-accept/fixed-A-t1.0-code-0-3.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-A-t1.0-code-0-2. Prefisso fisso, ancora 3687, proposte [2972, 1789, 632], sovrapposizione p/q [0.5370358670000001, 0, 0.54806977]. VRAM prima della richiesta 1.266 GiB. Log build/f4-accept/fixed-A-t1.0-code-0-2.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-A-t1.0-code-0-1. Prefisso fisso, ancora 177198, proposte [11, 585, 25], sovrapposizione p/q [0.61650281, 0.04937131, 0.2284746]. VRAM prima della richiesta 1.259 GiB. Log build/f4-accept/fixed-A-t1.0-code-0-1.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-A-t1.0-code-0-0. Prefisso fisso, ancora 464, proposte [2857, 271, 727], sovrapposizione p/q [0.9688834, 0.5859926010000001, 0.6445583934]. VRAM prima della richiesta 1.266 GiB. Log build/f4-accept/fixed-A-t1.0-code-0-0.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-A-t1.0-chat-0-3. Prefisso fisso, ancora 4931, proposte [1870, 384, 378], sovrapposizione p/q [0.46198344, 0.14040981, 0.09991499000000001]. VRAM prima della richiesta 1.262 GiB. Log build/f4-accept/fixed-A-t1.0-chat-0-3.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-A-t1.0-chat-0-2. Prefisso fisso, ancora 3687, proposte [829, 7320, 13], sovrapposizione p/q [0.400422115, 0.9959804, 0.657113817]. VRAM prima della richiesta 1.270 GiB. Log build/f4-accept/fixed-A-t1.0-chat-0-2.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-A-t1.0-chat-0-1. Prefisso fisso, ancora 271, proposte [17, 13, 2025], sovrapposizione p/q [0, 0.9999875, 0.02670928]. VRAM prima della richiesta 1.283 GiB. Log build/f4-accept/fixed-A-t1.0-chat-0-1.json.
+
+- **26/11/2026, Codex**, F4 accettazione fixed-A-t1.0-chat-0-0. Prefisso fisso, ancora 271, proposte [16, 13, 198], sovrapposizione p/q [0, 0.696594469, 0]. VRAM prima della richiesta 1.379 GiB. Log build/f4-accept/fixed-A-t1.0-chat-0-0.json.
+
+- **26/11/2026, Codex**, F4 INT32 sintesi 32 input. Scala su 32 input e accumulo INT32 su due tile, opt-in. TRL3 a quattro token, up 150,94 -> 131,86 us (12,6% in meno), down 174,53 -> 149,22 us (14,5% in meno). TRL4 up 148,92 -> 133,17 us (10,6% in meno), down 172,68 -> 155,10 us (10,2% in meno). DFlash2 A-B-B-A sullo stesso seed: breve 50,99 -> 51,26 t/s, a 32K 46,50 -> 51,60 t/s. Ciclo stimato a 32K 62,41 -> 56,24 ms, accettazione 64,1% -> 64,1%. Vulkan 416/416, CTest 4/4, CPU top-1 31/31 e stessi token greedy. KL massima 0,00013943. Log build/f4-int32. Sul breve il ciclo stimato 59,15 -> 53,38 ms e l'accettazione 67,2% -> 58,6%. Il ciclo è stimato dai millisecondi di generazione per gruppo di tre proposte. A e B usano lo stesso binario sperimentale e le stesse richieste D2 con seed 42. L'opzione cambia la quantizzazione delle attivazioni della verifica. La variante a 64 input è stata archiviata dopo 410/416 casi. La build candidata è in `build/bin` e si attiva con `GGML_VK_TRELLIS_VERIFY_I32=1`.
+
+- **26/11/2026, Codex**, F4 INT32 logits-grouped32. Top-1 31/31, KL max 0.000139429648072006, stessi token greedy True. Exit 0. Processi concorrenti assenti e 14.576 GiB stimati liberi. Log build/f4-int32/logits-grouped32.
+
+- **26/11/2026, Codex**, F4 INT32 ctest-B-final. Exit 0. VRAM libera 14.576 GiB. 100% tests passed, 0 tests failed out of 4. Log build/f4-int32/ctest-B-final.log.
+
+- **26/11/2026, Codex**, F4 INT32 ops-B-final. Exit 0. VRAM libera 14.576 GiB. 416/416 tests passed. Log build/f4-int32/ops-B-final.log.
+
+- **26/11/2026, Codex**, F4 INT32 ops-A-final. Exit 0. VRAM libera 14.568 GiB. 416/416 tests passed. Log build/f4-int32/ops-A-final.log.
+
+- **26/11/2026, Codex**, F4 INT32 build finale. Build Windows con registrazione della pipeline limitata al supporto GLSL coopmat e dot. Exit 0. Log build/f4-int32/build-final.log.
+
+- **26/11/2026, Codex**, F4 INT32 server-A2 server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.573 GiB. Log build/f4-int32/server-A2.
+
+- **26/11/2026, Codex**, F4 INT32 server-A2-cold32k. Prefill 32145 token a 740.13 t/s in 43.43 s, cache 0. Generazione 384 token a 47.13 t/s, accettazione DFlash2 64.1%. Primo token 43.91 s, primo testo assente al limite di generazione. VRAM libera stimata al preflight 1.260 GiB con il solo server di prova. Log build/f4-int32/server-A2-cold32k.json.
+
+- **26/11/2026, Codex**, F4 INT32 server-A2-short. Prefill 153 token a 113.62 t/s in 1.35 s, cache 0. Generazione 384 token a 51.10 t/s, accettazione DFlash2 67.2%. Primo token 1.36 s, primo testo assente al limite di generazione. VRAM libera stimata al preflight 1.377 GiB con il solo server di prova. Log build/f4-int32/server-A2-short.json.
+
+- **26/11/2026, Codex**, F4 INT32 server-B2 server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.574 GiB. Log build/f4-int32/server-B2.
+
+- **26/11/2026, Codex**, F4 INT32 server-B2-cold32k. Prefill 32145 token a 738.08 t/s in 43.55 s, cache 0. Generazione 384 token a 50.82 t/s, accettazione DFlash2 64.1%. Primo token 44.10 s, primo testo assente al limite di generazione. VRAM libera stimata al preflight 1.206 GiB con il solo server di prova. Log build/f4-int32/server-B2-cold32k.json.
+
+- **26/11/2026, Codex**, F4 INT32 server-B2-short. Prefill 153 token a 115.57 t/s in 1.32 s, cache 0. Generazione 384 token a 51.86 t/s, accettazione DFlash2 58.6%. Primo token 1.34 s, primo testo assente al limite di generazione. VRAM libera stimata al preflight 1.377 GiB con il solo server di prova. Log build/f4-int32/server-B2-short.json.
+
+- **26/11/2026, Codex**, F4 INT32 server-B1 server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.574 GiB. Log build/f4-int32/server-B1.
+
+- **26/11/2026, Codex**, F4 INT32 server-B1-cold32k. Prefill 32145 token a 733.15 t/s in 43.84 s, cache 0. Generazione 384 token a 52.38 t/s, accettazione DFlash2 64.1%. Primo token 44.41 s, primo testo assente al limite di generazione. VRAM libera stimata al preflight 1.256 GiB con il solo server di prova. Log build/f4-int32/server-B1-cold32k.json.
+
+- **26/11/2026, Codex**, F4 INT32 server-B1-short. Prefill 153 token a 113.44 t/s in 1.35 s, cache 0. Generazione 384 token a 50.65 t/s, accettazione DFlash2 58.6%. Primo token 1.35 s, primo testo assente al limite di generazione. VRAM libera stimata al preflight 1.373 GiB con il solo server di prova. Log build/f4-int32/server-B1-short.json.
+
+- **26/11/2026, Codex**, F4 INT32 server-A1 server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.566 GiB. Log build/f4-int32/server-A1.
+
+- **26/11/2026, Codex**, F4 INT32 server-A1-cold32k. Prefill 32145 token a 733.77 t/s in 43.81 s, cache 0. Generazione 384 token a 45.86 t/s, accettazione DFlash2 64.1%. Primo token 44.34 s, primo testo assente al limite di generazione. VRAM libera stimata al preflight 1.254 GiB con il solo server di prova. Log build/f4-int32/server-A1-cold32k.json.
+
+- **26/11/2026, Codex**, F4 INT32 server-A1-short. Prefill 153 token a 107.74 t/s in 1.42 s, cache 0. Generazione 384 token a 50.88 t/s, accettazione DFlash2 67.2%. Primo token 1.42 s, primo testo assente al limite di generazione. VRAM libera stimata al preflight 1.375 GiB con il solo server di prova. Log build/f4-int32/server-A1-short.json.
+
+- **26/11/2026, Codex**, F4 INT32 logits-grouped32. Top-1 31/31, KL max 0.000139429648072006, stessi token greedy True. Exit 0. Processi concorrenti assenti e 14.571 GiB stimati liberi. Log build/f4-int32/logits-grouped32.
+
+- **26/11/2026, Codex**, F4 INT32 ctest-B-32. Exit 0. VRAM libera 14.574 GiB. 100% tests passed, 0 tests failed out of 4. Log build/f4-int32/ctest-B-32.log.
+
+- **26/11/2026, Codex**, F4 INT32 perf-A-32-2. Exit 0. VRAM libera 14.564 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11253 runs - 94.23 us/run - 32816 kB/run - [1;34m 332.13 GB/s[0m | TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7105 runs - 155.52 us/run - 33080 kB/run - [1;34m 202.85 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6090 runs - 178.73 us/run - 33082 kB/run - [1;34m 176.52 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 10752 runs - 97.13 us/run - 43696 kB/run - [1;34m 429.02 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 6876 runs - 152.93 us/run - 43960 kB/run - [1;34m 274.14 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6112 runs - 177.59 us/run - 43962 kB/run - [1;34m 236.08 GB/s[0m. Log build/f4-int32/perf-A-32-2.log.
+
+- **26/11/2026, Codex**, F4 INT32 perf-B-32-2. Exit 0. VRAM libera 14.571 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11253 runs - 92.26 us/run - 32816 kB/run - [1;34m 339.22 GB/s[0m | TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 8120 runs - 131.58 us/run - 33080 kB/run - [1;34m 239.77 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 7105 runs - 149.73 us/run - 33082 kB/run - [1;34m 210.72 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 10752 runs - 93.35 us/run - 43696 kB/run - [1;34m 446.42 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7640 runs - 133.18 us/run - 43960 kB/run - [1;34m 314.78 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6876 runs - 155.14 us/run - 43962 kB/run - [1;34m 270.25 GB/s[0m. Log build/f4-int32/perf-B-32-2.log.
+
+- **26/11/2026, Codex**, F4 INT32 perf-B-32-1. Exit 0. VRAM libera 14.571 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11253 runs - 92.54 us/run - 32816 kB/run - [1;34m 338.21 GB/s[0m | TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 8120 runs - 132.13 us/run - 33080 kB/run - [1;34m 238.76 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 7105 runs - 148.72 us/run - 33082 kB/run - [1;34m 212.13 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11520 runs - 92.88 us/run - 43696 kB/run - [1;34m 448.65 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7640 runs - 133.15 us/run - 43960 kB/run - [1;34m 314.87 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6876 runs - 155.06 us/run - 43962 kB/run - [1;34m 270.38 GB/s[0m. Log build/f4-int32/perf-B-32-1.log.
+
+- **26/11/2026, Codex**, F4 INT32 perf-A-32-1. Exit 0. VRAM libera 14.571 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11253 runs - 91.84 us/run - 32816 kB/run - [1;34m 340.76 GB/s[0m | TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7105 runs - 146.36 us/run - 33080 kB/run - [1;34m 215.56 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6090 runs - 170.33 us/run - 33082 kB/run - [1;34m 185.23 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11520 runs - 92.83 us/run - 43696 kB/run - [1;34m 448.91 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7640 runs - 144.90 us/run - 43960 kB/run - [1;34m 289.33 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6112 runs - 167.77 us/run - 43962 kB/run - [1;34m 249.90 GB/s[0m. Log build/f4-int32/perf-A-32-1.log.
+
+- **26/11/2026, Codex**, F4 INT32 ops-B-32. Exit 0. VRAM libera 14.566 GiB. 416/416 tests passed. Log build/f4-int32/ops-B-32.log.
+
+- **26/11/2026, Codex**, F4 INT32 build 32 input. Build Windows con due tile per accumulatore INT32 e scala. Exit 0. Log build/f4-int32/build-32.log.
+
+- **26/11/2026, Codex**, F4 INT32 preparazione 32 input. Prima sostituzione interrotta prima della build perche il pattern trovava tre cicli. Resa selettiva sul ciclo delle tile.
+
+- **26/11/2026, Codex**, F4 INT32 sintesi 64 input. A-B-B-A TRL3 a quattro token: up 146,01 -> 128,33 us, down 169,54 -> 147,50 us. TRL4 up 145,08 -> 128,16 us, down 167,89 -> 151,65 us. Correttezza 410/416: errore sopra 5e-5 in sei casi. Variante archiviata in grouped64.patch.
+
+- **26/11/2026, Codex**, F4 INT32 perf-A2. Exit 0. VRAM libera 14.575 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11253 runs - 92.50 us/run - 32816 kB/run - [1;34m 338.35 GB/s[0m | TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7105 runs - 146.28 us/run - 33080 kB/run - [1;34m 215.67 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6090 runs - 169.98 us/run - 33082 kB/run - [1;34m 185.61 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 10752 runs - 94.44 us/run - 43696 kB/run - [1;34m 441.28 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7640 runs - 144.97 us/run - 43960 kB/run - [1;34m 289.20 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6112 runs - 167.95 us/run - 43962 kB/run - [1;34m 249.62 GB/s[0m. Log build/f4-int32/perf-A2.log.
+
+- **26/11/2026, Codex**, F4 INT32 perf-B2. Exit 0. VRAM libera 14.572 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11253 runs - 92.47 us/run - 32816 kB/run - [1;34m 338.45 GB/s[0m | TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 8120 runs - 128.78 us/run - 33080 kB/run - [1;34m 244.98 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 7105 runs - 147.97 us/run - 33082 kB/run - [1;34m 213.22 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11520 runs - 92.93 us/run - 43696 kB/run - [1;34m 448.43 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 8404 runs - 128.11 us/run - 43960 kB/run - [1;34m 327.24 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6876 runs - 151.31 us/run - 43962 kB/run - [1;34m 277.09 GB/s[0m. Log build/f4-int32/perf-B2.log.
+
+- **26/11/2026, Codex**, F4 INT32 perf-B1. Exit 0. VRAM libera 14.572 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11253 runs - 92.06 us/run - 32816 kB/run - [1;34m 339.95 GB/s[0m | TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 8120 runs - 127.88 us/run - 33080 kB/run - [1;34m 246.70 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 7105 runs - 147.03 us/run - 33082 kB/run - [1;34m 214.59 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 10752 runs - 93.75 us/run - 43696 kB/run - [1;34m 444.51 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 8404 runs - 128.20 us/run - 43960 kB/run - [1;34m 327.03 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6876 runs - 151.99 us/run - 43962 kB/run - [1;34m 275.84 GB/s[0m. Log build/f4-int32/perf-B1.log.
+
+- **26/11/2026, Codex**, F4 INT32 perf-A1. Exit 0. VRAM libera 14.572 GiB. TRELLIS(type=trl3,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11253 runs - 92.11 us/run - 32816 kB/run - [1;34m 339.79 GB/s[0m | TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7105 runs - 145.73 us/run - 33080 kB/run - [1;34m 216.48 GB/s[0m | TRELLIS(type=trl3,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6090 runs - 169.09 us/run - 33082 kB/run - [1;34m 186.58 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11520 runs - 92.46 us/run - 43696 kB/run - [1;34m 450.70 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7640 runs - 145.18 us/run - 43960 kB/run - [1;34m 288.77 GB/s[0m | TRELLIS(type=trl4,k=17408,n=5120,t=4,rows=[1,128,1],cols=[1,1024,1],parts=[0,0],gather=0): 6112 runs - 167.82 us/run - 43962 kB/run - [1;34m 249.82 GB/s[0m. Log build/f4-int32/perf-A1.log.
+
+- **26/11/2026, Codex**, F4 INT32 ops-B. Exit 1. VRAM libera 14.568 GiB. [TRELLIS] ERR = 0.000052434 > 0.000050000   TRELLIS(type=trl1,k=256,n=256,t=3,rows=[1,2,1],cols=[1,2,1],parts=[0,0],gather=1): [1;31mFAIL[0m | [TRELLIS] ERR = 0.000051856 > 0.000050000   TRELLIS(type=trl1,k=512,n=256,t=3,rows=[1,128,1],cols=[1,128,1],parts=[0,0],gather=1,x_pad=16): [1;31mFAIL[0m | [TRELLIS] ERR = 0.000051519 > 0.000050000   TRELLIS(type=trl2,k=512,n=256,t=3,rows=[1,128,1],cols=[1,128,1],parts=[0,0],gather=1,x_pad=16): [1;31mFAIL[0m | [TRELLIS] ERR = 0.000054193 > 0.000050000   TRELLIS(type=trl4,k=256,n=256,t=3,rows=[1,2,1],cols=[1,2,1],parts=[0,0],gather=0): [1;31mFAIL[0m | [TRELLIS] ERR = 0.000051553 > 0.000050000   TRELLIS(type=trl4,k=8192,n=64,t=3,rows=[0,0,1],cols=[1,8192,1],parts=[0,0],gather=1): [1;31mFAIL[0m | [TRELLIS] ERR = 0.000052238 > 0.000050000   TRELLIS(type=trl5,k=512,n=256,t=3,rows=[1,128,1],cols=[1,128,1],parts=[0,0],gather=1,x_pad=16): [1;31mFAIL[0m | 410/416 tests passed | Failing tests: | Backend Vulkan0: [1;31mFAIL[0m | [1;31mFAIL[0m. Log build/f4-int32/ops-B.log.
+
+- **26/11/2026, Codex**, F4 INT32 build. Build Windows del prototipo opt-in con scala condivisa su 64 input e accumulo INT32. Exit 0. Log build/f4-int32/build.log.
+
+- **26/11/2026, Codex**, F4 INT32 spirv. Due shader della variante raggruppata, compilazione e validazione SPIR-V. Exit 0.
+
+- **26/11/2026, Codex**, F4 INT32 baseline. Build 128. Exit 0. TRELLIS(type=trl3,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 11253 runs - 92.19 us/run - 32816 kB/run - [1;34m 339.47 GB/s[0m | TRELLIS(type=trl3,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7105 runs - 145.69 us/run - 33080 kB/run - [1;34m 216.55 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=1,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 10752 runs - 93.19 us/run - 43696 kB/run - [1;34m 447.19 GB/s[0m | TRELLIS(type=trl4,k=5120,n=17408,t=4,rows=[1,1024,1],cols=[1,128,1],parts=[0,0],gather=0): 7640 runs - 145.16 us/run - 43960 kB/run - [1;34m 288.81 GB/s[0m. Controllo GPU e log in build/f4-int32/baseline.
+
+- **26/11/2026, Codex**, D2 build 128 confronto finale. 32K a cache fredda: NariQ 580,40 -> 726,08 t/s di prefill e 47,87 -> 45,70 t/s di generazione. Unsloth 878,22 -> 882,07 t/s di prefill e 100,26 -> 105,69 t/s di generazione. 65K a cache fredda: NariQ 531,11 -> 644,36 t/s di prefill e 44,00 -> 41,19 t/s di generazione. Unsloth 752,03 -> 750,75 t/s di prefill e 84,24 -> 87,35 t/s di generazione. Picco VRAM dedicata del processo 12,74 / 13,61 GiB (Unsloth / NariQ). Stessi prompt D2 e stessa build 128 per entrambi. Log build/d2-b128.
+
+- **26/11/2026, Codex**, D2 build 128 nariq server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.585 GiB. Log build/d2-b128/nariq.
+
+- **26/11/2026, Codex**, D2 build 128 nariq-cold65k. Prefill 65145 token a 644.36 t/s in 101.10 s, cache 0. Generazione 384 token a 41.19 t/s, accettazione DFlash2 55.3%. Primo token 101.16 s, primo testo assente al limite di generazione. VRAM libera stimata al preflight 1.109 GiB con il solo server di prova. Log build/d2-b128/nariq-cold65k.json.
+
+- **26/11/2026, Codex**, D2 build 128 nariq-warm32k. Prefill 53 token a 31.88 t/s in 1.66 s, cache 32141. Generazione 256 token a 49.59 t/s, accettazione DFlash2 68.7%. Primo token 1.71 s, primo testo assente al limite di generazione. VRAM libera stimata al preflight 1.107 GiB con il solo server di prova. Log build/d2-b128/nariq-warm32k.json.
+
+- **26/11/2026, Codex**, D2 build 128 nariq-cold32k. Prefill 32145 token a 726.08 t/s in 44.27 s, cache 0. Generazione 384 token a 45.70 t/s, accettazione DFlash2 64.1%. Primo token 44.83 s, primo testo assente al limite di generazione. VRAM libera stimata al preflight 1.251 GiB con il solo server di prova. Log build/d2-b128/nariq-cold32k.json.
+
+- **26/11/2026, Codex**, D2 build 128 nariq-short. Prefill 153 token a 104.93 t/s in 1.46 s, cache 0. Generazione 384 token a 51.45 t/s, accettazione DFlash2 67.2%. Primo token 1.46 s, primo testo assente al limite di generazione. VRAM libera stimata al preflight 1.357 GiB con il solo server di prova. Log build/d2-b128/nariq-short.json.
+
+- **26/11/2026, Codex**, D2 build 128 production server. Suite terminata con exit 0. VRAM stimata libera prima dell'avvio 14.63 GiB. Log build/d2-b128/production.
+
+- **26/11/2026, Codex**, D2 build 128 production-cold65k. Prefill 65145 token a 750.75 t/s in 86.77 s, cache 0. Generazione 384 token a 87.35 t/s, accettazione DFlash2 63.4%. Primo token 86.86 s, primo testo assente al limite di generazione. VRAM libera stimata al preflight 2.023 GiB con il solo server di prova. Log build/d2-b128/production-cold65k.json.
+
+- **26/11/2026, Codex**, D2 build 128 production-warm32k. Prefill 53 token a 47.36 t/s in 1.12 s, cache 32141. Generazione 256 token a 85.90 t/s, accettazione DFlash2 51.5%. Primo token 1.16 s, primo testo assente al limite di generazione. VRAM libera stimata al preflight 2.016 GiB con il solo server di prova. Log build/d2-b128/production-warm32k.json.
+
+- **26/11/2026, Codex**, D2 build 128 production-cold32k. Prefill 32145 token a 882.07 t/s in 36.44 s, cache 0. Generazione 384 token a 105.69 t/s, accettazione DFlash2 70.5%. Primo token 36.74 s, primo testo assente al limite di generazione. VRAM libera stimata al preflight 2.263 GiB con il solo server di prova. Log build/d2-b128/production-cold32k.json.
+
+- **26/11/2026, Codex**, D2 build 128 production-short. Prefill 153 token a 132.05 t/s in 1.16 s, cache 0. Generazione 384 token a 106.24 t/s, accettazione DFlash2 61.5%. Primo token 1.16 s, primo testo assente al limite di generazione. VRAM libera stimata al preflight 2.363 GiB con il solo server di prova. Log build/d2-b128/production-short.json.
 
 - **26/11/2026 notte, Claude**, `70dc70ae1`: limite di 64 token al micro-batch della bozza DFlash/DSpark solo con target Trellis (chiave `trellis.version` del GGUF). Unsloth UD-Q2_K_XL con DFlash2 sulla build NariQ: prefill di 2,5K token 662 → 716 t/s (come la produzione `d4b007d`: 716), generazione identica alla produzione seed per seed (114,7 / 112,0 / 108,3). NariQ resta a 64 (verificato nel log del contesto della bozza). Con questo il ramo esegue sia Unsloth (prestazioni della produzione) sia NariQ.
   - **OpenClaw**: profilo `qwen38-nariq` in `scripts\Start-OpenClaw-Local.ps1` (stesse impostazioni di `qwen38`, GGUF e mmproj letti da questa cartella, build in `runtime\backends\llama.cpp-nariq-vulkan-win-x64-70dc70ae1`), voce in `profiles\openclaw-profiles.json`, server riconosciuto da `Stop-OpenClaw-Local.ps1`; launcher `Avvia OpenClaw Qwen38 NariQ.bat` sul desktop e nella cartella di OpenClaw. Copie dei file prima della modifica in `runtime\migrations\2026-11-26-nariq-profile\backup`. Non avviato da Claude.

@@ -240,6 +240,68 @@ Il primo token include il thinking e la generazione conta tutti i token prodotti
 
 Picco VRAM dedicata del processo 12,74 GiB per Unsloth e 13,60 GiB per C8. Controlli dei processi, VRAM e log per richiesta in `build/d2-c8`. [Registro delle prove](NARIQ_PIANO.md)
 
+## Confronto OpenClaw con build 128
+
+Il 26/11/2026, entrambi i modelli hanno usato il binario dei launcher OpenClaw, build 128 (commit 70dc70ae1) sulla RX 9070. DFlash2 a 3 token, Flash Attention, KV q4_0, batch e microbatch target 512, contesto allocato a 114.688 e proiettore su CPU. Il log conferma microbatch della bozza 512 con Unsloth e 64 con NariQ, secondo il limite della build. Tuning Vulkan predefinito, cache dei prompt da 4.096 MiB e 12 checkpoint. Richieste chat in streaming, una misura per caso. Hash e numero di token dei prompt verificati contro il D2 precedente. Ogni coppia riporta Unsloth / NariQ.
+
+| Richiesta | Token nuovi | Token in cache | Prefill t/s | Prefill s | Generazione t/s | Primo token s | Accettazione DFlash2 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Breve | 153 | 0 | 132,05 / 104,93 | 1,16 / 1,46 | 106,24 / 51,45 | 1,16 / 1,46 | 61,48 / 67,19% |
+| 32K a cache fredda | 32.145 | 0 | 882,07 / 726,08 | 36,44 / 44,27 | 105,69 / 45,70 | 36,74 / 44,83 | 70,46 / 64,14% |
+| Follow-up a 32K | 53 | 32.141 | 47,36 / 31,88 | 1,12 / 1,66 | 85,90 / 49,59 | 1,16 / 1,71 | 51,49 / 68,65% |
+| 65K a cache fredda | 65.145 | 0 | 750,75 / 644,36 | 86,77 / 101,10 | 87,35 / 41,19 | 86,86 / 101,16 | 63,38 / 55,30% |
+
+32K a cache fredda: NariQ 580,40 -> 726,08 t/s di prefill e 47,87 -> 45,70 t/s di generazione. Unsloth 878,22 -> 882,07 t/s di prefill e 100,26 -> 105,69 t/s di generazione. 65K a cache fredda: NariQ 531,11 -> 644,36 t/s di prefill e 44,00 -> 41,19 t/s di generazione. Unsloth 752,03 -> 750,75 t/s di prefill e 84,24 -> 87,35 t/s di generazione. Picco VRAM dedicata del processo 12,74 / 13,61 GiB (Unsloth / NariQ).
+
+Il primo token include il thinking. Le metriche di generazione contano tutti i token prodotti. I confronti con il 25/11 usano gli stessi messaggi e sessioni distinte. Log, preflight e risposte in `build/d2-b128`.
+
+## Verifica Trellis con scala comune su 32 input
+
+Scala su 32 input e accumulo INT32 su due tile, opt-in. TRL3 a quattro token, up 150,94 -> 131,86 us (12,6% in meno), down 174,53 -> 149,22 us (14,5% in meno). TRL4 up 148,92 -> 133,17 us (10,6% in meno), down 172,68 -> 155,10 us (10,2% in meno). DFlash2 A-B-B-A sullo stesso seed: breve 50,99 -> 51,26 t/s, a 32K 46,50 -> 51,60 t/s. Ciclo stimato a 32K 62,41 -> 56,24 ms, accettazione 64,1% -> 64,1%. Vulkan 416/416, CTest 4/4, CPU top-1 31/31 e stessi token greedy. KL massima 0,00013943. Log build/f4-int32.
+
+Sul breve il ciclo stimato 59,15 -> 53,38 ms e l'accettazione 67,2% -> 58,6%. Il ciclo è stimato dai millisecondi di generazione per gruppo di tre proposte. A e B usano lo stesso binario sperimentale e le stesse richieste D2 con seed 42. L'opzione cambia la quantizzazione delle attivazioni della verifica. La variante a 64 input è stata archiviata dopo 410/416 casi. La build candidata è in `build/bin` e si attiva con `GGML_VK_TRELLIS_VERIFY_I32=1`.
+
+## Accettazione DFlash2 e costo di verifica con F4
+
+Nei primi cicli sono stati confrontati dieci prefissi fissi. Una coppia entra nel confronto per posizione solo quando coincidono ancora e proposte precedenti. Overlap di target e bozza A/B 0,437/0,441, 0,545/0,544 e 0,306/0,300. Variazione totale media target 0,0078, 0,0110, 0,0185. Per la bozza 0,0313, 0,0167, 0,0375. Questo campione evidenzia differenze nelle distribuzioni, con overlap medio simile.
+
+Tre seed per prompt e configurazione, fino a 192 token per richiesta, temperatura del target 1,0 e tre proposte. I tempi di generazione includono il thinking. Ogni colonna usa un prompt.
+
+| Variante | Chat breve t/s | Codice t/s | 32K t/s |
+| --- | ---: | ---: | ---: |
+| Riferimento, bozza 1,0 | 51,38 | 52,03 | 46,88 |
+| F4, bozza 0,8 | 60,03 | 54,43 | 53,25 |
+| F4, bozza 1,0 | 55,17 | 55,28 | 52,92 |
+| F4, bozza 1,2 | 56,27 | 55,26 | 51,67 |
+
+Nel profilo GPU seriale, mediana dei grafi di verifica 55,66 -> 51,58 ms. Le operazioni Trellis a quattro token pesano 47,72 ms con F4, con 18,06 ms per up e 10,39 ms per down. Le bande della testa della bozza pesano 2,00 ms. I tempi del profilo includono l'overhead delle misure.
+
+Risultato A-B-B-A, medie in microsecondi. trl3 5120->17408 136,95 -> 143,77. trl3 17408->5120 156,45 -> 164,50. trl4 5120->17408 138,39 -> 141,47. trl4 17408->5120 159,67 -> 168,33. Vulkan 416/416. Variante archiviata in build/f4-accept/scale-reuse.patch. Ripristinati lo shader e la DLL F4 precedente, copia verificata con SHA-256.
+
+## Conferma della temperatura e diagnostica F4
+
+La RX 9070 ha eseguito F4 su cinque nuove richieste e tre seed per richiesta. Il target è rimasto a 1,0 e DFlash2 usa tre proposte. Si riportano i token generati, thinking incluso.
+
+| Scenario | Bozza 1,0 | Bozza 0,8 | Coppie a favore di 0,8 |
+| --- | ---: | ---: | ---: |
+| Chat breve | 52,66 t/s | 54,21 t/s | 6/9 |
+| Codice | 56,91 t/s | 58,01 t/s | 2/3 |
+| 32K | 52,89 t/s | 52,68 t/s | 1/3 |
+
+Bozza 0,8 confermata per chat breve nei prompt provati. 52,66 -> 54,21 t/s, accettazione 58,6% -> 61,7%, 6/9 coppie a favore di 0,8.
+
+Diagnostico TRL3 a 4 token, con output sintetici. Up 130,99 us con il kernel esatto, 72,52 us con hash e packing sostituiti e 60,11 us saltando anche le letture dei codici. Down 148,55 -> 93,59 -> 70,69 us nelle stesse prove. Il proxy senza WMMA è più lento e cambia il modo in cui il driver carica e usa i frammenti. Questi confronti localizzano il costo della decodifica e non sono una scomposizione additiva.
+
+Pack esatto a coppie in F4. trl3 5120 → 17408 132,06 -> 123,88 us. trl3 17408 → 5120 149,44 -> 141,18 us. trl4 5120 → 17408 133,23 -> 125,22 us. trl4 17408 → 5120 156,08 -> 147,14 us. Vulkan 416/416 e CTest 4/4. Le 31 righe dei logits coincidono bit per bit con F4 prima della modifica.
+
+I binari diagnostici isolati contengono solo il test degli operatori. Lo shader della build applicativa contiene il pack esatto. Log e dati delle prove in `build/f4-confirm`.
+
+## Verifica dell'impacchettamento F4 su llama-server
+
+F4 attiva in entrambe le build, bozza 0,8. Confronto server A-B-B-A su stessi prompt e seed. breve 55.13 -> 59.18 t/s (+7.35%), ciclo stimato 53.86 -> 50.17 ms, token DFlash2 1014/1552 in entrambi. 32K 50.24 -> 53.49 t/s (+6.46%), ciclo stimato 56.20 -> 52.79 ms, token DFlash2 494/816 in entrambi. Guadagno confermato sul server a 32K.
+
+Due passaggi per variante, 384 token per richiesta. Il ciclo è stimato usando il tempo di generazione per gruppo di tre proposte. I tempi escludono il prefill. Rapporti e log in build/f4-pack-server.
+
 ## Riproduzione delle prove
 
 Da un nuovo checkout Windows x64 del branch, usare `scripts\build-vulkan-windows.cmd` con MSVC e Vulkan SDK. Lo script crea gli eseguibili in `build/bin`. Nel checkout locale qui sotto si usa la build già pronta in `build/packaging-x64/bin`. Sostituire `$build` con `'.\build'` dopo una compilazione tramite script. Eseguire dalla radice del repository, con il GGUF 3.0 bpw disponibile in `models`.
