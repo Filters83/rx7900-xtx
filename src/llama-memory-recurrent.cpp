@@ -17,6 +17,9 @@
 
 #if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
 #include <immintrin.h>
+#elif defined(_MSC_VER) && defined(_M_X64)
+#include <immintrin.h>
+#include <intrin.h>
 #endif
 
 // the device can run the delta-net replay op with these shapes
@@ -1010,11 +1013,46 @@ static void gdn_log_update_fma(float * s, const float * k, float d, float g, uin
         s[i] = fmaf(k[i], d, g * s[i]);
     }
 }
+#elif defined(_MSC_VER) && defined(_M_X64)
+// MSVC: the same vector path (the intrinsics need no /arch flag; the CPU and OS support is checked at run time)
+static void gdn_log_update_fma(float * s, const float * k, float d, float g, uint32_t n) {
+    const __m256 vd = _mm256_set1_ps(d);
+    const __m256 vg = _mm256_set1_ps(g);
+    uint32_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        const __m256 vs = _mm256_mul_ps(vg, _mm256_loadu_ps(s + i));
+        _mm256_storeu_ps(s + i, _mm256_fmadd_ps(_mm256_loadu_ps(k + i), vd, vs));
+    }
+    for (; i < n; ++i) {
+        s[i] = fmaf(k[i], d, g * s[i]);
+    }
+}
+
+static bool gdn_cpu_has_avx2_fma() {
+    int r[4];
+    __cpuid(r, 0);
+    if (r[0] < 7) {
+        return false;
+    }
+    __cpuid(r, 1);
+    const bool fma = (r[2] >> 12) & 1, osxsave = (r[2] >> 27) & 1, avx = (r[2] >> 28) & 1;
+    if (!fma || !osxsave || !avx || (_xgetbv(0) & 6) != 6) {
+        return false;
+    }
+    __cpuidex(r, 7, 0);
+    return (r[1] >> 5) & 1;
+}
 #endif
 
 static void gdn_log_update(float * s, const float * k, float d, float g, uint32_t n) {
 #if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
     static const bool has_fma = __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma");
+    if (has_fma) {
+        gdn_log_update_fma(s, k, d, g, n);
+        return;
+    }
+#elif defined(_MSC_VER) && defined(_M_X64)
+    static const bool has_fma = gdn_cpu_has_avx2_fma();
     if (has_fma) {
         gdn_log_update_fma(s, k, d, g, n);
         return;
@@ -1107,7 +1145,13 @@ void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::
             const uint64_t s_size_row = ggml_row_size(s_l[il]->type, hparams.n_embd_s());
             io.write(&s_size_row, sizeof(s_size_row));
 
-            // a logged state is written with its log applied
+            // a logged state is written with its log applied; a size query only counts the bytes
+            if (l_l[il] != nullptr && io.counting_only()) {
+                for (size_t c = 0; c < log_cells.size(); ++c) {
+                    io.write(nullptr, s_size_row);
+                }
+                continue;
+            }
             if (l_l[il] != nullptr) {
                 std::vector<float> state;
                 for (const auto & lc : log_cells) {

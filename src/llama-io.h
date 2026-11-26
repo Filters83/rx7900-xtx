@@ -17,6 +17,9 @@ public:
     // bytes written so far
     virtual size_t n_bytes() = 0;
 
+    // true for a writer that only counts bytes (state size queries): writers of derived data may skip computing it
+    virtual bool counting_only() const { return false; }
+
     void write_string(const std::string & str);
 };
 

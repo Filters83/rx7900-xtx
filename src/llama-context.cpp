@@ -2944,6 +2944,10 @@ public:
         return size_written;
     }
 
+    bool counting_only() const override {
+        return true;
+    }
+
 private:
     const bool skip_tensors;
 
