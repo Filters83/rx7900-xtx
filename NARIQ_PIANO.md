@@ -322,7 +322,9 @@ Il 26/11 l'email d'autore dei commit non ancora pubblicati è stata portata all'
 
 Voci più recenti in alto. Formato: data, chi, commit o "non committato", cosa, numeri (riferimento → candidato), esito.
 
-- **26/11/2026, Claude**, commit di questa voce: F4 (accumulo int32, una scala ogni 32 input) anche per la verifica da 5 a 16 token (`trellis_verify16_i32_cm`, variante `TRELLIS_VERIFY_I32` di `trellis_verify16_cm.comp`). Resta attiva solo con `GGML_VK_TRELLIS_VERIFY_I32=1`.
+- **26/11/2026, Claude**, commit di questa voce: F4 predefinita da 2 a 16 token (`GGML_VK_TRELLIS_VERIFY_I32=0` la spegne). Con le impostazioni predefinite: test-backend-ops TRELLIS 380/380, ctest 4/4, logits contro CPU u1 / u4 / u6 / u32 KL massima 2,0e-4 / 1,4e-4 / 2,7e-4 / 6,2e-5, top-1 100%, KLD 385 token massima 3,6e-5, stesso top-1 100%. Profilo OpenClaw `qwen38-nariq`: bozza DFlash2 da 3 a 5 token e `--spec-draft-temp 0.8`. VRAM dedicata nella suite G1 a 112K: 14,46 GB con bozza 3, 14,49 GB con bozza 5 (+27 MB).
+
+- **26/11/2026, Claude**, commit di questa voce: F4 (accumulo int32, una scala ogni 32 input) anche per la verifica da 5 a 16 token (`trellis_verify16_i32_cm`, variante `TRELLIS_VERIFY_I32` di `trellis_verify16_cm.comp`). Ancora opt-in in questo commit (predefinita dalla voce sopra).
   - **Prove preliminari**: hash con moltiplicazione a 16 bit (`uint16_t`): corretta ma il compilatore la allarga a `v_mul_lo_u32`, 1 token 92 → 105 µs, scartata. LDS da 64 KB sul driver AMD Windows: non forzabile (`maxComputeSharedMemorySize` = 32768 nel driver 26.11.2, nessuna estensione, chiave di registro o opzione LLPC nota; 64 KB solo con RADV su Linux).
   - **Correttezza**: test-backend-ops TRELLIS 380/380 con e senza F4 (comprende t = 8); ctest 4/4; logits contro CPU, KL massima senza / con F4: u4 2,1e-4 / 1,4e-4, u6 e u8 4,4e-4 / 2,7e-4, u16 9,3e-5 / 1,6e-4, top-1 100%.
   - **Tempi** (`test-backend-ops perf`, A-B-B-A, TRL3 up `5120 → 17408`): 5 token 151,5 → 127,9 µs, 6 token 153,3 → 130,4, 8 token 157,0 → 133,0, 16 token 176,0 → 148,5; down `17408 → 5120` a 6 token 177,1 → 154,5. TRL4 simile (6 token 156 → 135). Nuovi casi perf a 5, 6, 8 token (e down a 6).
