@@ -322,6 +322,13 @@ Il 26/11 l'email d'autore dei commit non ancora pubblicati è stata portata all'
 
 Voci più recenti in alto. Formato: data, chi, commit o "non committato", cosa, numeri (riferimento → candidato), esito.
 
+- **26/11/2026, Claude**, commit di questa voce: F4 (accumulo int32, una scala ogni 32 input) anche per la verifica da 5 a 16 token (`trellis_verify16_i32_cm`, variante `TRELLIS_VERIFY_I32` di `trellis_verify16_cm.comp`). Resta attiva solo con `GGML_VK_TRELLIS_VERIFY_I32=1`.
+  - **Prove preliminari**: hash con moltiplicazione a 16 bit (`uint16_t`): corretta ma il compilatore la allarga a `v_mul_lo_u32`, 1 token 92 → 105 µs, scartata. LDS da 64 KB sul driver AMD Windows: non forzabile (`maxComputeSharedMemorySize` = 32768 nel driver 26.11.2, nessuna estensione, chiave di registro o opzione LLPC nota; 64 KB solo con RADV su Linux).
+  - **Correttezza**: test-backend-ops TRELLIS 380/380 con e senza F4 (comprende t = 8); ctest 4/4; logits contro CPU, KL massima senza / con F4: u4 2,1e-4 / 1,4e-4, u6 e u8 4,4e-4 / 2,7e-4, u16 9,3e-5 / 1,6e-4, top-1 100%.
+  - **Tempi** (`test-backend-ops perf`, A-B-B-A, TRL3 up `5120 → 17408`): 5 token 151,5 → 127,9 µs, 6 token 153,3 → 130,4, 8 token 157,0 → 133,0, 16 token 176,0 → 148,5; down `17408 → 5120` a 6 token 177,1 → 154,5. TRL4 simile (6 token 156 → 135). Nuovi casi perf a 5, 6, 8 token (e down a 6).
+  - **Server** (suite `build/g1`, F4 attiva, bozza 0,8, ordine 3-4-5-5-4-3, somme di due run; chat-42 / chat-173 / long-42): n-max 3: 63,5 / 55,9 / 53,6 t/s, ciclo 49,5 / 49,4 / 52,3 ms (invariato). n-max 4: 51,1 / 61,7 / 55,9, ciclo 53,6 / 53,2 / 56,8 ms (prima 60-65). n-max 5: 64,9 / 65,4 / 59,7 t/s, ciclo 54,3 / 53,3 / 58,0 ms (prima 62-66), 3,46-3,52 token per ciclo. Prefill long-42 750-762 t/s invariato.
+  - **Esito**: con F4 la bozza da 5 token batte quella da 3 in tutti i casi, media 57,7 → 63,3 t/s (+10%). Da decidere: F4 predefinita e n-max 5 nel profilo OpenClaw; da provare n-max 6-8.
+
 - **26/11/2026, Claude**, commit di questa voce (solo il nuovo caso perf `17408 → 5120` a 1 token): G2 e G3.
   - **G2, tempi** (`test-backend-ops perf`, F4 attiva, TRL3 / TRL4): up `5120 → 17408` a 1 token 91,9 / 93,5 µs, a 4 token 122,7 / 124,5; down `17408 → 5120` a 1 token 110,2 / 110,9, a 4 token 139,6 / 147,2.
   - **G2, ISA** (`trellis_matvec_q8` a 1 token e `trellis_verify_i32_cm` a 4 token, TRL3): per 8 pesi per lane 2 letture `b32` dei codici, finestra di bit con `lshrrev` + `lshlrev` + `lshl_or` + `alignbit`, 8 stati con 6 `bfe` + 4 `mov_b16`, 8 `v_mul_lo_u32` (hash, un quarto di velocità: ~32 cicli), 8 `and`, 8 `dot4`. Indici delle parole e shift delle finestre sono già fuori dal ciclo delle tile (registri costanti per lane): la prima parte di G3 è già fatta dal compilatore.
