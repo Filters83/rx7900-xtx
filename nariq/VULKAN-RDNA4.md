@@ -60,15 +60,15 @@ Notes:
 
 ## Performance
 
-RX 9070, KV cache q4_0, flash attention, batch and micro-batch 512, build `2ec322ee1`. Unsloth = Qwen3.8-27B
+RX 9070, KV cache q4_0, flash attention, batch and micro-batch 512, build `8d94a9c7f`. Unsloth = Qwen3.8-27B
 UD-Q2_K_XL on the same binary.
 
 **llama-bench** (no draft):
 
 | | NariQ 3.0 bpw | Unsloth UD-Q2_K_XL |
 |---|---|---|
-| Prefill pp512 | 1130 t/s | 1160 t/s |
-| Prefill pp512 at 32K context | 764 t/s | 796 t/s |
+| Prefill pp512 | 1213 t/s | 1160 t/s |
+| Prefill pp512 at 32K context | 822 t/s | 796 t/s |
 | Generation tg64 | 30.1 t/s | 39.4 t/s |
 | 7-token verify (pp7, draft of 6) | 169 t/s | |
 
@@ -78,7 +78,7 @@ UD-Q2_K_XL on the same binary.
 |---|---|---|
 | Generation, chat | 68-73 t/s | 107-109 t/s |
 | Generation, 32K prompt | 66 t/s | 106 t/s |
-| Prefill, 32K prompt | 864 t/s (37.2 s) | 898 t/s (35.8 s) |
+| Prefill, 32K prompt | 896 t/s (35.9 s) | 898 t/s (35.8 s) |
 | Short prompt (153 tokens) | ~0.65 s | ~1.2 s |
 
 NariQ generation is compute-bound, not memory-bound: every weight is rebuilt from its 16-bit state for each token.
@@ -95,6 +95,9 @@ That is why the draft matters so much: verifying 7 tokens costs only ~1.25× a s
   multiply; the constants now come from a value the compiler cannot see.
 - **Prefill:** fused MLP chain (gate and up output rotations, SwiGLU and down input rotation in one kernel), and
   128-block rotations done in registers, fused with the input and output stages.
+- **Two 256-token chunks per prompt-product launch.** The 128 × 256 product fits one workgroup per CU (180 VGPRs),
+  so 136 workgroups for gate and up left the last of 3 rounds under half full; with a 512-token micro-batch both
+  chunks now share one launch (5 rounds instead of 6, no extra memory).
 - **DFlash2 draft:** shares embedding and Trellis head with the target; the prompt features go to the draft directly
   on the GPU, even when the draft runs in smaller chunks than the target batch.
 - **Faster recurrent-state checkpoints** (Qwen3.8 delta-net) with the draft: rebuilding the replay registers uses
@@ -116,6 +119,7 @@ All optimizations are on by default; `=0` turns one off, for comparisons or to i
 | `GGML_VK_TRELLIS_FUSE` | fused input/output stages up to 15 tokens |
 | `GGML_VK_TRELLIS_CHAIN` | fused MLP chain in prefill |
 | `GGML_VK_TRELLIS_PREP_IN`, `GGML_VK_TRELLIS_OUT128` | 128-block rotations in registers in prefill |
+| `GGML_VK_TRELLIS_MM_PAIR` | two 256-token chunks per prompt-product launch |
 | `LLAMA_DFLASH_DEV_INJECT` | direct GPU hand-off of features to the draft |
 
 Diagnostics: `GGML_VK_TRELLIS_PROFILE=1` (with `GGML_VK_PERF_LOGGER=1`) prints the GPU time of each Trellis stage;
