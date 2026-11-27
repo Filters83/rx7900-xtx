@@ -14,6 +14,11 @@ below come from there. The full experiment log, with measurements and rejected a
 | Host | Ryzen 7 5800X, 32 GB RAM, Windows 11 |
 | Compiler | MSVC 19.51 (Visual Studio 2026), Vulkan SDK 1.4.363 |
 
+## Prebuilt
+
+[Windows x64 zip](https://github.com/Filters83/rx7900-xtx/releases/tag/nariq-vulkan-rdna4-a2339cffe), with `run-nariq-server.cmd` that starts
+the server with the tested settings (put the GGUF files in its `models` folder).
+
 ## Build
 
 ```

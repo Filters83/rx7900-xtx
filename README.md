@@ -157,6 +157,9 @@ The `nariq-vulkan-rdna4` branch adds Vulkan support for Nari Labs' **NariQ** mod
 3.0 bpw, ~10 GB). It is tested on **Windows 11 with an RX 9070 (RDNA4) and the AMD proprietary driver**
 (Adrenalin 26.11.2). The same binary also runs regular GGUF models.
 
+**Ready to use, no compiler needed:** [Windows x64 zip](https://github.com/Filters83/rx7900-xtx/releases/tag/nariq-vulkan-rdna4-a2339cffe), with `run-nariq-server.cmd` that starts
+the server with the tested settings (put the GGUF files in its `models` folder).
+
 - **Trellis ops on Vulkan** for token generation, DFlash2 draft verification and prefill, all enabled by default.
 - **16 GB is enough, barely**: ~14.5 GB dedicated with 112K context and the draft model; keep other VRAM-heavy
   programs (e.g. a browser with heavy tabs) closed.
