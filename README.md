@@ -163,15 +163,15 @@ The [`nariq-vulkan-rdna4`](https://github.com/Filters83/rx7900-xtx/tree/nariq-vu
 
 ### Performance
 
-RX 9070, KV cache q4_0, flash attention, batch and micro-batch 512, build `2ec322ee1`. Unsloth = Qwen3.8-27B
+RX 9070, KV cache q4_0, flash attention, batch and micro-batch 512, build `8d94a9c7f`. Unsloth = Qwen3.8-27B
 UD-Q2_K_XL on the same binary.
 
 **llama-bench** (no draft):
 
 | | NariQ 3.0 bpw | Unsloth UD-Q2_K_XL |
 |---|---|---|
-| Prefill pp512 | 1130 t/s | 1160 t/s |
-| Prefill pp512 at 32K context | 764 t/s | 796 t/s |
+| Prefill pp512 | 1213 t/s | 1160 t/s |
+| Prefill pp512 at 32K context | 822 t/s | 796 t/s |
 | Generation tg64 | 30.1 t/s | 39.4 t/s |
 | 7-token verify (pp7, draft of 6) | 169 t/s | |
 
@@ -181,7 +181,7 @@ UD-Q2_K_XL on the same binary.
 |---|---|---|
 | Generation, chat | 68-73 t/s | 107-109 t/s |
 | Generation, 32K prompt | 66 t/s | 106 t/s |
-| Prefill, 32K prompt | 864 t/s (37.2 s) | 898 t/s (35.8 s) |
+| Prefill, 32K prompt | 896 t/s (35.9 s) | 898 t/s (35.8 s) |
 | Short prompt (153 tokens) | ~0.65 s | ~1.2 s |
 
 NariQ generation is compute-bound, not memory-bound: every weight is rebuilt from its 16-bit trellis state for each
