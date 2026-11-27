@@ -19,7 +19,7 @@ set "VISION="
 if exist "%MMPROJ%" set VISION=--mmproj "%MMPROJ%" --no-mmproj-offload
 set "SPEC="
 if exist "%DRAFT%" set SPEC=--spec-type draft-dflash --spec-draft-model "%DRAFT%" --spec-draft-device Vulkan0 --spec-draft-ngl 99 --spec-draft-type-k q4_0 --spec-draft-type-v q4_0 --spec-draft-n-max 6 --spec-draft-temp 0.8 --spec-accept rejection -bs --spec-draft-vocab 65536
-llama-server.exe --model "%MODEL%" %VISION% --device Vulkan0 --n-gpu-layers 99 --ctx-size %CTX% --parallel 1 ^
+"%~dp0llama-server.exe" --model "%MODEL%" %VISION% --device Vulkan0 --n-gpu-layers 99 --ctx-size %CTX% --parallel 1 ^
     --flash-attn on --cache-type-k q4_0 --cache-type-v q4_0 --batch-size 512 --ubatch-size 512 ^
     --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0 --repeat-penalty 1 --jinja --reasoning-effort medium ^
     --cache-ram 4096 --ctx-checkpoints 12 --fit off %SPEC% --host 127.0.0.1 --port 8080 %*
