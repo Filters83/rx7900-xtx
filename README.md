@@ -146,10 +146,49 @@ Each change, with the environment variable that switches it off: [docs/rdna3/OPT
 
 - Tested with Qwen3.8-27B (UD-Q4_K_M, IQ3_S) and Qwen3.5-4B. Other models run like on upstream; the
   model-specific work (gated delta net, DFlash2) only applies to the Qwen3.5 / 3.8 family.
-- The Vulkan kernels are tuned for RDNA3 with RADV. Other GPUs fall back to upstream code paths in most places, but this
-  fork is only tested on RDNA3.
+- The Vulkan kernels are tuned for RDNA3 with RADV. Other GPUs fall back to upstream code paths in most places. RDNA4
+  (RX 9070) with the AMD proprietary Windows driver is tested on the `nariq-vulkan-rdna4` branch (section below).
 - The fork is not synced with upstream every day. It branches from `f95b0d953`.
 - Not affiliated with ggml-org. Bugs in this fork belong in this repository's issues, not upstream's.
+
+## NariQ on Windows with RDNA4 (`nariq-vulkan-rdna4` branch)
+
+The `nariq-vulkan-rdna4` branch adds Vulkan support for Nari Labs' **NariQ** models (Trellis-coded Qwen3.8-27B,
+3.0 bpw, ~10 GB). It is tested on **Windows 11 with an RX 9070 (RDNA4) and the AMD proprietary driver**
+(Adrenalin 26.11.2). The same binary also runs regular GGUF models.
+
+- **Trellis ops on Vulkan** for token generation, DFlash2 draft verification and prefill, all enabled by default.
+- **16 GB is enough, barely**: ~14.5 GB dedicated with 112K context and the draft model; keep other VRAM-heavy
+  programs (e.g. a browser with heavy tabs) closed.
+
+### Performance
+
+RX 9070, KV cache q4_0, flash attention, batch and micro-batch 512, build `2ec322ee1`. Unsloth = Qwen3.8-27B
+UD-Q2_K_XL on the same binary.
+
+**llama-bench** (no draft):
+
+| | NariQ 3.0 bpw | Unsloth UD-Q2_K_XL |
+|---|---|---|
+| Prefill pp512 | 1130 t/s | 1160 t/s |
+| Prefill pp512 at 32K context | 764 t/s | 796 t/s |
+| Generation tg64 | 30.1 t/s | 39.4 t/s |
+| 7-token verify (pp7, draft of 6) | 169 t/s | |
+
+**llama-server with the DFlash2 draft** (NariQ: 6 tokens at temp 0.8; Unsloth: 3 tokens at temp 1.0), 112K context:
+
+| | NariQ | Unsloth |
+|---|---|---|
+| Generation, chat | 68-73 t/s | 107-109 t/s |
+| Generation, 32K prompt | 66 t/s | 106 t/s |
+| Prefill, 32K prompt | 864 t/s (37.2 s) | 898 t/s (35.8 s) |
+| Short prompt (153 tokens) | ~0.65 s | ~1.2 s |
+
+NariQ generation is compute-bound, not memory-bound: every weight is rebuilt from its 16-bit trellis state for each
+token. That is why the draft matters so much: verifying 7 tokens costs only ~1.25× a single token.
+
+Build, recommended launch command and environment variables: [nariq/VULKAN-RDNA4.md](nariq/VULKAN-RDNA4.md).
+Experiment log (Italian): [NARIQ_PIANO.md](NARIQ_PIANO.md).
 
 ## License
 
